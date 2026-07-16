@@ -47,3 +47,9 @@ po/*~
 
 # RStudio Connect folder
 rsconnect/
+
+# Personal data and large files
+*.csv
+*.xlsx
+*.rds
+data/
