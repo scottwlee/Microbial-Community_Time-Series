@@ -1,5 +1,5 @@
 ################################################################################
-# [Phase 5 - Part 5 (Version_2): Macro-ecological Traits (Seasonal Phenology)]
+# [Phase 5 - Part 5 (Version_2.1): Macro-ecological Traits (Seasonal Phenology)]
 # 목적: 10년 치 전체 데이터를 월별(Month) 축으로 투영하여, 
 #       GMM으로 분류된 세 그룹(Negative, Neutral, Positive)의 계절적 출현 패턴을 분석함.
 # 특징: 
@@ -8,6 +8,7 @@
 #      여름철 호열성 우점, 겨울철 호냉성 우점, 기회주의적 스파이크 패턴을 입증함.
 #   3) [enable_save_outputs] 원터치 마스터 스위치로 파일/로그 저장 여부 완벽 제어.
 #   4) 이전 분석과 일관성을 맞추기 위해 Y축 명칭에 'Absolute' 명시.
+#   5) [색상 통일] 지정된 그룹별 고유 색상 및 글로벌 추세선 색상 일괄 적용.
 ################################################################################
 
 # -------------------------------------------------------------------
@@ -157,7 +158,11 @@ tryCatch({
   log_msg("Generating Seasonal Phenology Plot with Cyclic GAM...")
   
   method_title <- tools::toTitleCase(summary_method)
-  custom_colors <- c("1_Negative" = "#3182ce", "2_Neutral" = "#a0aec0", "3_Positive" = "#e53e3e")
+  
+  # [색상 설정 업데이트] 사용자가 지정한 그룹별 고유 색상 및 공통 추세선 색상 정의
+  custom_colors <- c("1_Negative" = "#347433", "2_Neutral" = "#999999", "3_Positive" = "#DC2525")
+  trend_color   <- "#0065F8"  
+  ci_color      <- "#0065F8"  
   
   caption_base <- sprintf(
     "Note: Clusters defined via 1D GMM (G=%d) on Temp_IS.\nData points represent monthly mean absolute abundance per ASV (%s).\nGAM lines fitted with Cyclic Cubic Splines (bs='cc') to model continuous seasonal shifts.",
@@ -166,6 +171,8 @@ tryCatch({
   
   p_phenology <- ggplot(df_monthly_mean, aes(x = Month, y = Log_Abundance, color = Cluster, fill = Cluster)) +
     geom_jitter(alpha = 0.3, size = 1.5, width = 0.2) +
+    # 해당 플롯은 군집별(Cluster)로 구분된 추세선을 그리므로 color 매핑에 의해 custom_colors가 자동 적용됨.
+    # 만약 단일 글로벌 추세선이 추가될 경우 color = trend_color, fill = ci_color를 활용할 수 있음.
     geom_smooth(method = "gam", formula = y ~ s(x, bs = "cc", k = 12), 
                 alpha = 0.2, linewidth = 1.5) +
     scale_color_manual(values = custom_colors) +
@@ -175,7 +182,7 @@ tryCatch({
       title = "Seasonal Phenology & Temporal Niche Partitioning",
       subtitle = paste0("Tracking 10-year microbial bloom dynamics across ", method_title, " IS Groups"),
       x = "Month of the Year",
-      y = "Log10(Monthly Mean Absolute Abundance + 1)",  # [수정] Absolute Abundance 명시
+      y = "Log10(Monthly Mean Absolute Abundance + 1)", 
       caption = caption_base
     ) +
     theme(
