@@ -1,32 +1,28 @@
 ################################################################################
-# [Phase 5 - Part 19: Unified Taxonomic Composition (Dynamic Values & Legend Fixed)]
+# [Phase 5 - Part 19 (b) (Master Version): Unified Taxonomic Composition]
 # 목적: ASV Count(생물다양성)와 Mean Abundance(생태적 우점도) 기반 분류군 조성을 비교함.
 # 특징:
-#   1) [자동 패키지 설치] 환경에 누락된 필수 라이브러리를 감지하고 자동 설치함.
-#   2) [plot_A_value], [plot_B_value] 스위치를 통해 플롯 A와 B를 각각 
-#      'absolute'(절대값) 또는 'relative'(비율, 100%)로 자유롭게 전환 가능.
-#   3) (B) Absolute 계산 시 'IS vs Mean' 플롯과의 완벽한 수학적 일관성을 위해 
-#      개별 ASV의 '10-year Mean Abundance'를 합산하여 군집의 절대 생물량을 도출.
-#   4) 고해상도 TIFF 추출 시 하단 범례 겹침(Overlap) 방지 여백 최적화 적용.
-#   5) [enable_save_outputs] 원터치 마스터 스위치로 파일/로그/CSV 저장 여부 완벽 제어.
+#   1) [핵심 혁신: True Zero-Included] Part 4, 5, 7과 완벽하게 동일한 
+#      tidyr::complete 로직을 적용하여 극우점종/희귀종의 생물량 과대평가 오류 차단.
+#   2) [plot_A_value], [plot_B_value] 스위치를 통해 절대값/비율 전환 가능.
+#   3) 고해상도 TIFF 추출 시 하단 범례 겹침 방지 여백 최적화 적용.
 ################################################################################
+
+options(stringsAsFactors = FALSE)
 
 # -------------------------------------------------------------------
 # Section 0. Environment Setup & Package Auto-Installation
 # -------------------------------------------------------------------
-options(stringsAsFactors = FALSE)
-
-# 1) 필수 패키지 목록 정의 및 자동 설치
-required_packages <- c("dplyr", "ggplot2", "cowplot", "mclust", "RColorBrewer", "stats")
+required_packages <- c("dplyr", "tidyr", "ggplot2", "cowplot", "mclust", "RColorBrewer", "stats")
 new_packages <- required_packages[!(required_packages %in% installed.packages()[,"Package"])]
 if(length(new_packages)) {
   cat("[System] Installing missing packages: ", paste(new_packages, collapse = ", "), "\n")
   install.packages(new_packages, repos = "http://cran.us.r-project.org")
 }
 
-# 2) 패키지 로드
 suppressPackageStartupMessages({
   library(dplyr)
+  library(tidyr)
   library(ggplot2)
   library(cowplot)
   library(mclust)
@@ -36,47 +32,26 @@ suppressPackageStartupMessages({
 theme_set(theme_cowplot())
 
 #################################################
-# USER SETTINGS (스위치 및 파라미터 제어)
+# USER SETTINGS 
 #################################################
-# [1] 분류군 해상도 (옵션: "L2" (Phylum), "L3" (Class), "L4" (Order))
-# - 플롯에 표시할 분류학적 계급 수준.
 tax_level <- "L3"          
-
-# [2] 통합 임계값 (단위: %, 상대 비율 기준. 권장: 2.0 ~ 5.0)
-# - 이 수치 미만의 비율을 차지하는 미소 분류군은 'Others'로 묶어 가독성 향상.
 abundance_threshold <- 3.0 
 
-# [3] 플롯 값 표현 방식 선택 (옵션: "absolute", "relative")
-# - "absolute": (A) 실제 ASV 개수 합산(Richness), (B) 평균 절대 풍부도 합산.
-# - "relative": (A) ASV 개수 비율(100%), (B) 풍부도 비율(100%).
-plot_A_value <- "absolute"  # 권장: absolute (종 풍부도 비교 증명용)
-plot_B_value <- "absolute"  # 권장: absolute (IS vs Mean 플롯과 논리적 연계용)
+plot_A_value <- "absolute"  
+plot_B_value <- "absolute"  
 
-# [4] 플롯 출력 모드 및 캡션 설정
-# - plot_mode 옵션: "combined" (하나의 패널로 묶음), "individual" (개별 플롯 생성)
 plot_mode <- "combined"     
 include_caption <- TRUE     
 
-# [5] 분석 파라미터 일관성 유지 (Part 4, 5, 6과 동일)
-# - summary_method (옵션: "median", "mean") : IS 대푯값 산정 기준
-# - g_clusters (고정: 3) : 생태적 지위 그룹 개수
-# - exclude_zeros (옵션: TRUE, FALSE) : 휴면기 데이터 배제 여부
 summary_method <- "median"
 g_clusters <- 3 
-exclude_zeros <- FALSE
+# [수정] exclude_zeros 옵션 삭제 (강제 Zero-Included 적용으로 논문 통일성 확보)
 
-# [6] 특정 분류군 이름 변경 딕셔너리 (옵션)
-# - 최신 분류학 명칭으로 업데이트하기 위한 딕셔너리 (불필요시 비워둠).
 taxa_rename_dict <- c(
   "Proteobacteria" = "Pseudomonadota",
   "Bacteroidetes"  = "Bacteroidota"
 )
-
-# [7] 분류군 시각화 컬러 팔레트 (옵션: "Paired", "Set3", "Spectral" 등)
 taxa_palette <- "Spectral" 
-
-# [8] 결과 저장 마스터 스위치 (옵션: TRUE, FALSE)
-# - TRUE일 경우 디렉토리 생성, 로그 기록, TIFF 및 CSV 파일 저장을 실제로 수행함.
 enable_save_outputs <- FALSE
 
 # -------------------------------------------------------------------
@@ -86,22 +61,19 @@ base_dir   <- "/home/scott/EDM_16SV4_PA"
 input_dir  <- file.path(base_dir, "04_Phase4_Output/01_Data_Integration")
 out_dir    <- file.path(base_dir, "05_Phase5_Output/17_Unified_Taxonomic_Composition")
 
-# [원터치 제어] 디렉토리 생성
 if (enable_save_outputs && !dir.exists(out_dir)) dir.create(out_dir, recursive = TRUE)
 
 file_abundance <- file.path(input_dir, "Target_ASVs_Absolute_Abundance_Calculated.csv")
 file_temp_is   <- file.path(input_dir, "Merged_Interaction_Strength_Final.csv")
 
-# 파일명에 세팅 상태 동적 반영
 cap_str   <- ifelse(include_caption, "CapON", "CapOFF")
-zero_str  <- ifelse(exclude_zeros, "ZeroExc", "ZeroInc")
 value_str <- paste0("A-", plot_A_value, "_B-", plot_B_value)
 
-log_file <- file.path(out_dir, paste0("Part19_Composition_", tax_level, "_", value_str, "_", cap_str, "_Log.txt"))
+# 파일명에 TrueZero 명시
+log_file <- file.path(out_dir, paste0("Part19_Composition_", tax_level, "_", value_str, "_TrueZero_", cap_str, "_Log.txt"))
 
 log_msg <- function(msg) {
   cat(format(Sys.time(), "[%Y-%m-%d %H:%M:%S]"), msg, "\n")
-  # [원터치 제어] 텍스트 파일에 로그 기록
   if (enable_save_outputs) {
     cat(format(Sys.time(), "[%Y-%m-%d %H:%M:%S]"), msg, "\n", file = log_file, append = TRUE)
   }
@@ -122,32 +94,34 @@ tryCatch({
     }
   }
   
-  df_merged <- dplyr::inner_join(
-    df_ab_raw %>% dplyr::select(ASV = ASV_ID, Date = Sample_Date, Absolute_Abundance),
-    df_is_raw %>% dplyr::select(ASV = ASV_ID, Date = Sample_Date, Temp_IS = Interaction_Strength),
-    by = c("ASV", "Date")
-  ) %>% dplyr::filter(!is.na(Temp_IS) & !is.na(Absolute_Abundance))
-  
-  if (exclude_zeros) {
-    df_merged <- df_merged %>% filter(Absolute_Abundance > 0)
-    zero_text <- "Zero-excluded"
-  } else {
-    zero_text <- "Zero-included"
-  }
+  df_ab <- df_ab_raw %>% dplyr::select(ASV = ASV_ID, Date = Sample_Date, Absolute_Abundance)
+  df_is <- df_is_raw %>% dplyr::select(ASV = ASV_ID, Date = Sample_Date, Temp_IS = Interaction_Strength)
   
   # -------------------------------------------------------------------
-  # Section 2. GMM Clustering & Master Data Frame
+  # Section 2. True Zero-Included Aggregation & GMM Clustering
   # -------------------------------------------------------------------
-  log_msg("Step 2. Aggregating data and applying GMM clustering...")
+  log_msg("Step 2. Aggregating data (True Zero-Included) and applying GMM...")
   
-  asv_summary <- df_merged %>%
+  # [엔진 1] IS(온도 민감도) 대푯값 추출 (상호작용이 존재하는 날 기준)
+  asv_is_summary <- dplyr::inner_join(df_ab, df_is, by = c("ASV", "Date")) %>%
+    dplyr::filter(!is.na(Temp_IS) & !is.na(Absolute_Abundance)) %>%
     group_by(ASV) %>%
-    summarise(
-      agg_IS = if(summary_method == "mean") mean(Temp_IS, na.rm = TRUE) else median(Temp_IS, na.rm = TRUE), 
-      asv_mean = mean(Absolute_Abundance, na.rm = TRUE)
-    ) %>% 
-    filter(asv_mean > 0 & !is.na(agg_IS))
+    summarise(agg_IS = if(summary_method == "mean") mean(Temp_IS, na.rm = TRUE) else median(Temp_IS, na.rm = TRUE),
+              .groups = "drop")
   
+  # [엔진 2] 평균 절대 풍부도 추출 (결측치 0 강제 복원)
+  all_sample_dates <- unique(df_ab$Date)
+  
+  asv_ab_summary <- df_ab %>%
+    tidyr::complete(ASV, Date = all_sample_dates, fill = list(Absolute_Abundance = 0)) %>%
+    group_by(ASV) %>%
+    summarise(asv_mean = mean(Absolute_Abundance, na.rm = TRUE), .groups = "drop")
+  
+  # 두 통계 엔진 병합
+  asv_summary <- dplyr::inner_join(asv_is_summary, asv_ab_summary, by = "ASV") %>%
+    dplyr::filter(!is.na(agg_IS) & asv_mean > 0)
+  
+  # GMM 클러스터링 적용
   set.seed(414)
   gmm_model <- Mclust(asv_summary$agg_IS, G = g_clusters)
   cluster_order <- order(gmm_model$parameters$mean)
@@ -235,15 +209,14 @@ tryCatch({
   # (B) 플롯 동적 라벨링 
   y_var_B   <- ifelse(plot_B_value == "absolute", "Taxon_Abundance", "Percentage")
   title_B   <- ifelse(plot_B_value == "absolute", "(B) Ecological Dominance (Abundance)", "(B) Ecological Dominance (Relative %)")
-  sub_B     <- ifelse(plot_B_value == "absolute", "Absolute mean abundance (Linked to 'IS vs Mean' plot)", "Abundance-weighted relative proportion (%)")
+  sub_B     <- ifelse(plot_B_value == "absolute", "Absolute mean abundance (True Zero-Included)", "Abundance-weighted relative proportion (%)")
   ylab_B    <- ifelse(plot_B_value == "absolute", "Absolute Mean Abundance", "Relative Proportion (%)")
   
-  cap_line1 <- sprintf("Note: Taxa with < %.1f%% abundance are grouped into 'Others' (%s). Colors are globally synchronized.", abundance_threshold, zero_text)
+  cap_line1 <- sprintf("Note: Taxa with < %.1f%% abundance are grouped into 'Others' (True Zero-Included). Colors are globally synchronized.", abundance_threshold)
   cap_line2 <- sprintf("[Plot A] %s | Pearson's Chi-squared test: X-squared = %.2f, %s", title_A, chi_count$statistic, pval_count)
   cap_line3 <- sprintf("[Plot B] %s | %s", title_B, sub_B)
   full_caption <- paste(cap_line1, cap_line2, cap_line3, sep = "\n")
   
-  # 범례 겹침 완벽 방지를 위한 여백 세밀화 테마
   plot_theme <- theme(
     plot.title = element_text(face = "bold", size = 15),
     plot.subtitle = element_text(size = 11, color = "gray20", margin = margin(b = 10)),
@@ -294,9 +267,9 @@ tryCatch({
       final_plot <- plot_grid(p_row, shared_legend, ncol = 1, rel_heights = c(1, 0.2))
     }
     
-    file_plot <- file.path(out_dir, paste0("Part19_Combined_", tax_level, "_", value_str, "_", zero_str, "_", cap_str, ".tiff"))
-    file_csv_div <- file.path(out_dir, paste0("Part19_Data_Diversity_", tax_level, "_", zero_str, ".csv"))
-    file_csv_dom <- file.path(out_dir, paste0("Part19_Data_Dominance_", tax_level, "_", zero_str, ".csv"))
+    file_plot <- file.path(out_dir, paste0("Part19_Combined_", tax_level, "_", value_str, "_TrueZero_", cap_str, ".tiff"))
+    file_csv_div <- file.path(out_dir, paste0("Part19_Data_Diversity_", tax_level, "_TrueZero.csv"))
+    file_csv_dom <- file.path(out_dir, paste0("Part19_Data_Dominance_", tax_level, "_TrueZero.csv"))
     
     if(enable_save_outputs) {
       ggsave(file_plot, plot = final_plot, device = "tiff", dpi = 600, width = 14, height = 9, compression = "lzw")
@@ -317,10 +290,10 @@ tryCatch({
       p_B_final <- p_B
     }
     
-    file_plot_A <- file.path(out_dir, paste0("Part19_Indiv_A_", tax_level, "_", plot_A_value, "_", zero_str, "_", cap_str, ".tiff"))
-    file_plot_B <- file.path(out_dir, paste0("Part19_Indiv_B_", tax_level, "_", plot_B_value, "_", zero_str, "_", cap_str, ".tiff"))
-    file_csv_div <- file.path(out_dir, paste0("Part19_Data_Diversity_", tax_level, "_", zero_str, ".csv"))
-    file_csv_dom <- file.path(out_dir, paste0("Part19_Data_Dominance_", tax_level, "_", zero_str, ".csv"))
+    file_plot_A <- file.path(out_dir, paste0("Part19_Indiv_A_", tax_level, "_", plot_A_value, "_TrueZero_", cap_str, ".tiff"))
+    file_plot_B <- file.path(out_dir, paste0("Part19_Indiv_B_", tax_level, "_", plot_B_value, "_TrueZero_", cap_str, ".tiff"))
+    file_csv_div <- file.path(out_dir, paste0("Part19_Data_Diversity_", tax_level, "_TrueZero.csv"))
+    file_csv_dom <- file.path(out_dir, paste0("Part19_Data_Dominance_", tax_level, "_TrueZero.csv"))
     
     if(enable_save_outputs) {
       ggsave(file_plot_A, plot = p_A_final, device = "tiff", dpi = 600, width = 8, height = 10, compression = "lzw")
