@@ -3,15 +3,13 @@
 # ------------------------------------------------------------------- #
 # [Phase 5 - Part 12 (Master Version): Top Winning ASVs Time-Series Visualization]
 # 
-# 목적: Part 8에서 식별된 '기회주의적 승리자(Winning ASVs)' 중 팽창 속도(Slope)가 
-#       가장 높은 상위 N개의 개별 궤적을 시계열 선형 플롯(Linear Plot)으로 시각화함.
+# 목적: Part 8에서 식별된 상위 승리자 ASV들의 궤적을 시각화하고 통계수치를 기록함.
 # 특징:
-#   1) [생태적 지위 대체 검증] Cold-favored taxa가 붕괴하는 특정 시기(Collapse Window)
-#      내에서의 연도별 팽창률만을 정밀 타격하여 경쟁적 해방 현상을 증명함.
-#   2) [Taxonomy 다이렉트 매칭] 원시 데이터의 L1~L7 컬럼 구조와 직관적인 분류군 명칭
-#      (Phylum, Class 등)을 동적으로 매핑하여 정확한 분류군 정보를 출력함. (버전 호환성 강화)
-#   3) [통계값 표시 스위치] 플롯 패널 우측 하단에 Slope 및 P-value 삽입(ON/OFF) 기능.
-#   4) [디자인 원칙] 추세선 초록색 실선(#347B34) 및 2x2 배치 통합/개별 플롯 동시 산출 지원.
+#   1) [생태적 지위 대체 검증] Collapse Window 내에서의 정밀 타격 분석.
+#   2) [Taxonomy 매핑] L1~L7 컬럼 구조와 직관적인 분류군 명칭 완벽 매핑.
+#   3) [클린 플롯 지향] 플롯 내부에는 텍스트(통계값)를 삽입하지 않고 깔끔하게 유지.
+#   4) [마스터 로깅 시스템] 중요 파라미터 설정값과 각 ASV(패널)별 상세 통계값
+#      (Slope, R², APA 형식 p-value)을 1:1로 매칭하여 로그 파일(.txt)에 영구 기록함.
 # ------------------------------------------------------------------- #
 
 options(stringsAsFactors = FALSE)
@@ -42,19 +40,20 @@ suppressPackageStartupMessages({
 #################################################
 
 # [1] 결과 저장 마스터 스위치 
-# TRUE: 지정된 폴더에 플롯(.tiff)과 로그(.txt) 물리적 저장 / FALSE: 뷰어 출력만 실행
+# - 옵션: TRUE (플롯과 로그를 지정된 폴더에 저장) / FALSE (뷰어와 콘솔에만 출력)
 enable_save_outputs <- TRUE
 
-# [2] 플롯 내 통계값 표시 스위치
-# TRUE: 우측 하단에 통계(Slope, p-value) 표시 / FALSE: 텍스트 없는 Clean Plot
-display_stats_on_plot <- TRUE
+# [2] 시각화 대상 및 레이아웃 설정
+# - top_n_asvs: 시각화할 상위 팽창 ASV 개수 (권장: 9)
+# - plot_columns: 통합 플롯(Facet Grid)의 열(Column) 개수 (2x2 배치를 원하면 2로 설정)
+top_n_asvs        <- 9         
+plot_columns      <- 2         
 
-# [3] 시각화 대상 및 분류군 표기 설정 (L1~L7 매핑)
-top_n_asvs        <- 20        # [수정됨] 상위 20개 ASV로 고정
-plot_columns      <- 2         # [수정됨] 통합 플롯(Facet Grid)의 열을 2개로 설정 (2x2)
-target_taxa_level <- "Class"   # 명시할 수준 입력 ("Domain", "Phylum", "Class", "Order", "Family", "Genus", "Species")
+# [3] 표시할 Taxonomy 수준 설정
+# - 옵션: "Domain", "Phylum", "Class", "Order", "Family", "Genus", "Species" 중 택 1
+target_taxa_level <- "Class"   
 
-# [4] 이전 Part 8 분석 파라미터 유지 (정합성 보장용 - 변경 금지 권장)
+# [4] 이전 Part 8 분석 파라미터 (Part 8과의 통계 정합성을 위해 변경 금지 권장)
 summary_method        <- "median"  
 g_clusters            <- 3 
 pow_target_cluster    <- "1_Negative"
@@ -64,13 +63,13 @@ alpha_threshold       <- 0.05
 # ------------------------------------------------------------------- #
 # 시각화 공통 색상 테마 설정
 # ------------------------------------------------------------------- #
-neu_color     <- "#737373" # Eurythermal taxa 색상
-pos_color     <- "#DC2525" # Warm-favored taxa 색상
+neu_color     <- "#737373" # Eurythermal taxa 색상 (Neutral)
+pos_color     <- "#DC2525" # Warm-favored taxa 색상 (Positive)
 trend_color   <- "#347B34" # [합의 반영] 추세선 초록색 실선
 trend_fill    <- "#347B34" # [합의 반영] 신뢰구간(CI) 초록색 음영
 
 # ------------------------------------------------------------------- #
-# 경로 설정
+# 경로 및 통합 로깅(Logging) 설정
 # ------------------------------------------------------------------- #
 base_dir   <- "/home/scott/EDM_16SV4_PA"
 input_dir  <- file.path(base_dir, "04_Phase4_Output/01_Data_Integration")
@@ -85,9 +84,10 @@ file_temp_is   <- file.path(input_dir, "Merged_Interaction_Strength_Final.csv")
 file_smap_sum  <- file.path(smap_dir, "Phase3_Part3_MDR_Smap_Summary.csv")
 file_part8_csv <- file.path(part8_dir, paste0("Part8_", toupper(summary_method), "_Micro_Replacement_Data.csv"))
 
-log_file       <- file.path(out_dir, paste0("Part12_TopWinners_Plot_Log_", format(Sys.time(), "%Y%m%d_%H%M%S"), ".txt"))
 file_plot_comb <- file.path(out_dir, paste0("Part12_Top_", top_n_asvs, "_Winners_Combined_Facet.tiff"))
+log_file       <- file.path(out_dir, paste0("Part12_TopWinners_Plot_Log_", format(Sys.time(), "%Y%m%d_%H%M%S"), ".txt"))
 
+# 메시지 출력 및 로그 기록 통합 함수
 log_msg <- function(msg) {
   cat(format(Sys.time(), "[%Y-%m-%d %H:%M:%S]"), msg, "\n")
   if (enable_save_outputs) {
@@ -100,12 +100,14 @@ tryCatch({
   log_msg(" [Phase 5 - Part 12: Top Winning ASVs Linear Time-Series Visualization]")
   log_msg(" [Analysis Parameters & Settings]")
   log_msg(sprintf(" - Target Top ASVs to Plot   : %d", top_n_asvs))
+  log_msg(sprintf(" - Plot Grid Columns         : %d", plot_columns))
   log_msg(sprintf(" - Display Taxonomy Level    : %s", target_taxa_level))
-  log_msg(sprintf(" - Show Stats on Plot        : %s", display_stats_on_plot))
+  log_msg(sprintf(" - Alpha (p-value) Threshold : %.2f", alpha_threshold))
+  log_msg(sprintf(" - Save Outputs Enabled      : %s", enable_save_outputs))
   log_msg("===================================================================\n")
   
   # ------------------------------------------------------------------- #
-  # Section 1. Load Part 8 Results & Filter Top Winners
+  # Section 1 & 2. Load Results, Prep Data & Dynamic POW Extraction
   # ------------------------------------------------------------------- #
   if(!file.exists(file_part8_csv)) stop("Part 8 CSV file not found. Please run Part 8 first.")
   df_part8 <- read.csv(file_part8_csv, stringsAsFactors = FALSE)
@@ -115,16 +117,11 @@ tryCatch({
     dplyr::arrange(desc(Slope)) %>%
     head(top_n_asvs)
   
-  if(nrow(top_winners) == 0) stop("No significant winning ASVs found in Part 8 results.")
-  
-  actual_n <- nrow(top_winners)
-  log_msg(sprintf("Step 1: Successfully extracted Top %d ASVs (Target was %d).", actual_n, top_n_asvs))
   target_asvs <- top_winners$ASV
+  actual_n <- nrow(top_winners)
+  log_msg(sprintf("Step 1: Successfully extracted Top %d ASVs.", actual_n))
   
-  # ------------------------------------------------------------------- #
-  # Section 2. Dynamic Data Prep (Linear: Yearly Aggregation)
-  # ------------------------------------------------------------------- #
-  log_msg("Step 2: Preparing phase-aligned yearly abundances for precise trendline matching...")
+  log_msg("Step 2: Preparing phase-aligned yearly abundances & extracting Collapse Window...")
   
   df_ab_raw   <- read.csv(file_abundance, stringsAsFactors = FALSE)
   df_is_raw   <- read.csv(file_temp_is, stringsAsFactors = FALSE)
@@ -157,7 +154,6 @@ tryCatch({
     dplyr::mutate(Cluster = factor(gmm_model$classification, levels = cluster_order, labels = c("1_Negative", "2_Neutral", "3_Positive"))) %>%
     dplyr::select(ASV, Cluster)
   
-  # POW (Collapse Months) 동적 추출
   sampled_ym <- df_ab_raw %>%
     dplyr::mutate(Date = as.Date(Sample_Date), Year = as.numeric(format(Date, "%Y")), Month = as.numeric(format(Date, "%m"))) %>%
     dplyr::select(Year, Month) %>% dplyr::distinct()
@@ -171,21 +167,18 @@ tryCatch({
   
   df_cluster_monthly <- sampled_ym %>%
     dplyr::left_join(df_cluster_abund, by = c("Year", "Month")) %>%
-    dplyr::mutate(
-      Total_Abund = tidyr::replace_na(Total_Abund, 0),
-      Log_Abundance = log10(Total_Abund + 1),
-      Month_Fct = factor(Month, levels = 1:12, labels = month.abb),
-      Year_Fct = factor(Year)
-    )
+    dplyr::mutate(Total_Abund = tidyr::replace_na(Total_Abund, 0),
+                  Log_Abundance = log10(Total_Abund + 1),
+                  Month_Fct = factor(Month, levels = 1:12, labels = month.abb),
+                  Year_Fct = factor(Year))
   
   aov_model <- aov(Log_Abundance ~ Month_Fct + Year_Fct, data = df_cluster_monthly)
   tukey_res <- HSD.test(aov_model, "Month_Fct", group = TRUE)
   peak_months_str <- rownames(tukey_res$groups)[grepl("a", tukey_res$groups$groups)]
   collapse_months <- which(month.abb %in% peak_months_str) %>% sort()
   
-  log_msg(sprintf(" -> Dynamically Extracted Target Window: Months %s", paste(collapse_months, collapse="-")))
+  log_msg(sprintf(" -> Dynamically Extracted Target Window (Collapse Window): Months %s", paste(collapse_months, collapse="-")))
   
-  # Time-lag 적용 및 특정 기간 연도별 합산
   df_aligned <- df_ab %>%
     tidyr::complete(ASV, Date = all_sample_dates, fill = list(Absolute_Abundance = 0)) %>%
     dplyr::arrange(ASV, as.Date(Date)) %>% 
@@ -205,78 +198,79 @@ tryCatch({
     dplyr::mutate(Log_Abund = log10(Yearly_Abund + 1))
   
   # ------------------------------------------------------------------- #
-  # Section 3. Formatting Taxonomy Labels & Logging Statistics (L1~L7 동적 매핑)
+  # Section 3. Calculate R², APA P-values & Format Taxonomy
   # ------------------------------------------------------------------- #
-  log_msg("\n-------------------------------------------------------------------")
-  log_msg("[LOGGED PLOT NOTES: TOP WINNING ASVS TIME-SERIES]")
+  log_msg("Step 3: Calculating R², mapping Taxonomy, and recording Statistics to Log...")
   
-  base_info <- top_winners %>% dplyr::select(ASV, Slope, P_value)
+  r2_results <- plot_data %>%
+    dplyr::group_by(ASV) %>%
+    dplyr::summarise(R2 = summary(lm(Log_Abund ~ Year))$r.squared, .groups = "drop")
   
-  # 데이터셋의 L1~L7 컬럼과 직관적인 분류군 명칭 매핑
-  taxa_col_mapping <- c(
-    "Domain"  = "L1",
-    "Phylum"  = "L2",
-    "Class"   = "L3",
-    "Order"   = "L4",
-    "Family"  = "L5",
-    "Genus"   = "L6",
-    "Species" = "L7"
-  )
+  base_info <- top_winners %>% dplyr::select(ASV, Slope, P_value) %>%
+    dplyr::left_join(r2_results, by = "ASV")
   
+  # APA 스타일 p-value 변환 함수
+  format_apa_pval <- function(p) {
+    if (p < 0.001) return("< .001")
+    if (p < 0.01) return("< .01")
+    if (p < 0.05) return("< .05")
+    p_str <- sprintf("%.3f", p)
+    return(paste0("= ", sub("^0", "", p_str)))
+  }
+  
+  # L1~L7 매핑
+  taxa_col_mapping <- c("Domain" = "L1", "Phylum" = "L2", "Class" = "L3", "Order" = "L4", "Family" = "L5", "Genus" = "L6", "Species" = "L7")
   actual_col_name <- taxa_col_mapping[target_taxa_level]
-  log_msg(sprintf("-> Target Taxonomy Level Displayed: %s (Mapped to column '%s')", target_taxa_level, actual_col_name))
   
-  # Base R 인덱싱을 통해 안전하게 추출
   if(!is.na(actual_col_name) && actual_col_name %in% colnames(df_ab_raw)) {
     taxa_extract <- df_ab_raw[, c("ASV_ID", actual_col_name)]
     colnames(taxa_extract) <- c("ASV", "Taxa_Val")
-    
-    taxa_extract <- taxa_extract %>%
-      dplyr::distinct() %>%
-      dplyr::group_by(ASV) %>% dplyr::slice(1) %>% dplyr::ungroup()
+    taxa_extract <- taxa_extract %>% dplyr::distinct() %>% dplyr::group_by(ASV) %>% dplyr::slice(1) %>% dplyr::ungroup()
     
     base_info <- base_info %>%
       dplyr::left_join(taxa_extract, by="ASV") %>%
       dplyr::mutate(Target_Taxa = ifelse(is.na(Taxa_Val) | Taxa_Val == "" | Taxa_Val == "NA" | Taxa_Val == "Unassigned", 
-                                         paste0("Unclassified ", target_taxa_level), 
-                                         Taxa_Val)) %>%
+                                         paste0("Unclassified ", target_taxa_level), Taxa_Val)) %>%
       dplyr::select(-Taxa_Val)
   } else {
-    log_msg(sprintf(" ! WARNING: Column mapping failed. Defaulting to Unclassified."))
     base_info$Target_Taxa <- paste0("Unclassified ", target_taxa_level)
   }
   
-  # 패널 라벨 및 통계 라벨 생성
   base_info <- base_info %>%
+    dplyr::rowwise() %>%
     dplyr::mutate(
       Facet_Label = sprintf("%s\n(%s)", ASV, Target_Taxa),
-      Stat_Label  = sprintf("Slope: +%.4f\np = %.2e", Slope, P_value) 
+      R2_fmt = sub("^0", "", sprintf("%.3f", R2))
     ) %>%
+    dplyr::ungroup() %>%
     dplyr::arrange(desc(Slope))
+  
+  # --- [중요] 로그 기록: 각 패널별 매칭되는 상세 통계 및 분류군 정보 출력 ---
+  log_msg("\n-------------------------------------------------------------------")
+  log_msg("[LOGGED PLOT NOTES: TOP WINNING ASVS DETAILED STATISTICS]")
+  log_msg("※ The following statistics match the plotted panels exactly.")
+  for(i in 1:nrow(base_info)) {
+    grp <- ifelse(top_winners$Cluster[top_winners$ASV == base_info$ASV[i]] == "3_Positive", "Warm-favored", "Eurythermal")
+    log_msg(sprintf(" [Plot Panel %d] ASV ID: %s | Taxonomy (%s): %s", i, base_info$ASV[i], target_taxa_level, base_info$Target_Taxa[i]))
+    log_msg(sprintf("   - Eco-Group : %s taxa", grp))
+    log_msg(sprintf("   - Slope     : %+.3f", base_info$Slope[i]))
+    log_msg(sprintf("   - R-squared : %s", base_info$R2_fmt[i]))
+    log_msg(sprintf("   - p-value   : p %s", format_apa_pval(base_info$P_value[i])))
+    log_msg("   -------------------------------------------------")
+  }
+  log_msg("-------------------------------------------------------------------\n")
   
   ordered_labels <- base_info$Facet_Label
   
   plot_data <- plot_data %>% 
-    dplyr::left_join(base_info %>% dplyr::select(ASV, Facet_Label, Stat_Label), by = "ASV") %>%
-    dplyr::mutate(
-      Facet_Label = factor(Facet_Label, levels = ordered_labels),
-      Eco_Group = ifelse(Cluster == "3_Positive", "Warm-favored taxa", "Eurythermal taxa")
-    )
-  
-  log_msg("\n[Top ASVs Detailed Statistics (Mapped perfectly to Plot Panel Titles)]")
-  for(i in 1:nrow(base_info)) {
-    grp <- ifelse(top_winners$Cluster[top_winners$ASV == base_info$ASV[i]] == "3_Positive", "Warm-favored", "Eurythermal")
-    log_msg(sprintf(" [Panel %d] %s", i, gsub("\n", " ", base_info$Facet_Label[i])))
-    log_msg(sprintf("   - Group     : %s taxa", grp))
-    log_msg(sprintf("   - Slope     : +%.4f", base_info$Slope[i]))
-    log_msg(sprintf("   - P-value   : %.2e", base_info$P_value[i]))
-  }
-  log_msg("-------------------------------------------------------------------\n")
+    dplyr::left_join(base_info %>% dplyr::select(ASV, Facet_Label), by = "ASV") %>%
+    dplyr::mutate(Facet_Label = factor(Facet_Label, levels = ordered_labels),
+                  Eco_Group = ifelse(Cluster == "3_Positive", "Warm-favored taxa", "Eurythermal taxa"))
   
   # ------------------------------------------------------------------- #
-  # Section 4. Generate Plots (Combined & Individual)
+  # Section 4. Generate Clean Plots (Combined & Individual)
   # ------------------------------------------------------------------- #
-  log_msg("Step 3: Generating Combined Facet Plot and Individual Plots...")
+  log_msg("Step 4: Generating Clean Combined Facet Plot and Individual Plots (No text overlay)...")
   
   custom_colors <- c("Eurythermal taxa" = neu_color, "Warm-favored taxa" = pos_color)
   years_seq <- min(plot_data$Year):max(plot_data$Year)
@@ -284,18 +278,16 @@ tryCatch({
     xmin = years_seq - 0.5, xmax = years_seq + 0.5, ymin = -Inf, ymax = Inf, year = years_seq
   ) %>% dplyr::filter(year %% 2 == 0)
   
-  # 4-1. 공통 테마 설정
   plot_theme <- theme_bw(base_size = 13) +
     theme(axis.text.x = element_text(angle = 45, hjust = 1, color = "black"), 
           axis.text.y = element_text(color = "black"),
           strip.background = element_rect(fill = "grey90"), 
           strip.text = element_text(face = "bold", size = 11),
           plot.title = element_text(face = "bold", hjust = 0.5, size = 15), 
-          panel.grid.major.x = element_blank(), 
-          panel.grid.minor = element_blank(), 
+          panel.grid.major.x = element_blank(), panel.grid.minor = element_blank(), 
           legend.position = "bottom")
   
-  # 4-2. 통합 플롯 (Facet Grid) 생성 (2x2 배치 적용)
+  # 통계 텍스트 오버레이가 제거된 깔끔한 통합 플롯
   p_combined <- ggplot(plot_data, aes(x = Year, y = Log_Abund)) +
     geom_rect(data = shading_ranges, aes(xmin = xmin, xmax = xmax, ymin = ymin, ymax = ymax), inherit.aes = FALSE, fill = "grey85", alpha = 0.4) +
     geom_point(aes(color = Eco_Group), size = 3, alpha = 0.8) +
@@ -307,28 +299,19 @@ tryCatch({
          x = "Year", y = "Log10(Phase-Aligned Yearly Abund + 1)", color = "Ecological Group") +
     plot_theme
   
-  if (display_stats_on_plot) {
-    p_combined <- p_combined + 
-      geom_text(aes(x = Inf, y = -Inf, label = Stat_Label), 
-                hjust = 1.05, vjust = -0.3, size = 3.5, color = "black", fontface = "italic", 
-                inherit.aes = FALSE, check_overlap = TRUE)
-  }
-  
   print(p_combined)
   
   if (enable_save_outputs) {
     ggsave(file_plot_comb, plot = p_combined, device = "tiff", dpi = 600, width = 10, height = 8, compression = "lzw")
-    log_msg(paste("[SUCCESS] Combined Facet Plot saved to:", file_plot_comb))
+    log_msg(sprintf(" -> Saved Clean Combined Facet Plot: %s", basename(file_plot_comb)))
   }
-  
-  # 4-3. 개별 ASV 플롯 분리 생성 및 저장 루프
-  log_msg("Step 4: Extracting and saving individual ASV plots...")
   
   for(i in 1:nrow(base_info)) {
     target_asv_id <- base_info$ASV[i]
     indiv_label <- base_info$Facet_Label[i]
     indiv_data <- plot_data %>% dplyr::filter(ASV == target_asv_id)
     
+    # 통계 텍스트 오버레이가 제거된 깔끔한 개별 플롯
     p_indiv <- ggplot(indiv_data, aes(x = Year, y = Log_Abund)) +
       geom_rect(data = shading_ranges, aes(xmin = xmin, xmax = xmax, ymin = ymin, ymax = ymax), inherit.aes = FALSE, fill = "grey85", alpha = 0.4) +
       geom_point(aes(color = Eco_Group), size = 4, alpha = 0.8) +
@@ -339,21 +322,14 @@ tryCatch({
            x = "Year", y = "Log10(Phase-Aligned Yearly Abund + 1)", color = "Ecological Group") +
       plot_theme
     
-    if (display_stats_on_plot) {
-      p_indiv <- p_indiv + 
-        geom_text(aes(x = Inf, y = -Inf, label = Stat_Label), 
-                  hjust = 1.05, vjust = -0.3, size = 4, color = "black", fontface = "italic", 
-                  inherit.aes = FALSE, check_overlap = TRUE)
-    }
-    
     if (enable_save_outputs) {
       file_plot_indiv <- file.path(out_dir, sprintf("Part12_Rank%02d_%s_Linear.tiff", i, target_asv_id))
       ggsave(file_plot_indiv, plot = p_indiv, device = "tiff", dpi = 600, width = 6, height = 5, compression = "lzw")
-      log_msg(sprintf(" -> Saved Individual Plot: Rank %d (%s)", i, target_asv_id))
+      log_msg(sprintf(" -> Saved Clean Individual Plot: Rank %d (%s)", i, target_asv_id))
     }
   }
   
-  log_msg("=== Phase 5 - Part 12 Analysis Complete ===")
+  log_msg("=== Phase 5 - Part 12 Analysis Complete ===\n")
   
 }, error = function(e) { log_msg(paste("ERROR:", e$message)); stop(e) })
 
