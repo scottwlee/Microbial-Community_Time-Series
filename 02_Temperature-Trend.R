@@ -1,3 +1,6 @@
+################################################################################
+# 마이크로바이옴 파이프라인 Phase 2: 시계열 분석 및 환경 변수 트렌드 (Publication Ready)
+################################################################################
 
 #################################################
 # USER SETTINGS (사용자 설정 영역)
@@ -14,13 +17,14 @@ outlier_temp_threshold <- 35.0  # 온도 이상치 기준 (°C)
 
 # 3. 시스템 및 출력 설정
 n_threads   <- min(33, parallel::detectCores())
-save_output <- FALSE      # TRUE: 데이터, 플롯, 로그 파일 모두 저장 / FALSE: 저장 없이 출력만 실행
+save_output <- TRUE       # TRUE: 데이터, 플롯, 로그 파일 모두 저장 / FALSE: 저장 없이 출력만 실행
 plot_style  <- "single"   # "dual": 이중 축(Dual-axis) 통합 플롯 / "single": 온도와 풍부도를 각각 분리된 플롯으로 생성
 
 #################################################
 # Section 1. Load Packages, Directories & Setup Logging
 #################################################
-required_packages <- c("phyloseq", "tidyverse", "dplyr", "ggplot2", "scales", "lubridate")
+# [신규 추가] 2단 구획 박스 생성을 위한 ggh4x 패키지 추가
+required_packages <- c("phyloseq", "tidyverse", "dplyr", "ggplot2", "scales", "lubridate", "ggh4x")
 
 for(pkg in required_packages) {
   if(!require(pkg, character.only = TRUE)) {
@@ -130,35 +134,24 @@ colnames(df_filt)[2] <- "Reads_Filt"
 df_combined <- merge(df_raw, df_filt, by = "Date", all = FALSE)
 df_combined <- na.omit(df_combined)
 
-# -------------------------------------------------------------
-# [통계 검정] 전체 기간 수온 트렌드 분석 (Linear Regression)
-# -------------------------------------------------------------
 df_combined$DecYear <- decimal_date(df_combined$Date)
 fit_temp <- lm(Temperature ~ DecYear, data = df_combined)
 slope_temp <- coef(fit_temp)[2]
 pval_temp <- summary(fit_temp)$coefficients[2, 4]
 sig_temp <- ifelse(pval_temp < 0.05, "Significant", "Not Significant")
 
-cat("\n==================================================\n")
-cat("[Overall Temperature Trend Statistics]\n")
-cat(sprintf("Annual Slope : %+.3f °C / year\n", slope_temp))
-cat(sprintf("P-value      : %.3e (%s)\n", pval_temp, sig_temp))
-cat("==================================================\n\n")
 write_log(sprintf("Overall Temp Trend: %+.3f °C/year, p=%.3e", slope_temp, pval_temp))
 
-# 유사도 지표 계산
 cor_pearson <- cor(df_combined$Reads_Raw, df_combined$Reads_Filt, method = "pearson")
-cor_spearman <- cor(df_combined$Reads_Raw, df_combined$Reads_Filt, method = "spearman")
 mean_prop <- mean(df_combined$Reads_Filt / df_combined$Reads_Raw, na.rm = TRUE)
 
-# 플롯 캡션 노트 설정 
 note_text_combined <- sprintf(
-  "Statistics Note:\n- Overall Temp Trend: %+.3f °C/yr (p = %.3e)\n- Pearson correlation (Pre vs Post): %.4f (%.1f%%)\n- Mean retained biomass proportion: %.1f%%\n\nPlot Elements:\n- Grey shaded backgrounds indicate even years.\n- Solid blue line (#0065F8) represents the overall linear regression trend.\n- Blue shaded area around the solid line represents the 95%% Confidence Interval (CI).",
+  "Statistics Note:\n- Overall Temp Trend: %+.3f °C/yr (p = %.3e)\n- Pearson correlation (Pre vs Post): %.4f (%.1f%%)\n- Mean retained biomass proportion: %.1f%%\n\nPlot Elements:\n- Grey shaded backgrounds indicate even years.\n- Solid GREEN line (#347433) represents the overall linear regression trend.\n- GREEN shaded area around the solid line represents the 95%% Confidence Interval (CI).",
   slope_temp, pval_temp, cor_pearson, cor_pearson * 100, mean_prop * 100
 )
 
 note_text_temp <- sprintf(
-  "Statistics Note:\n- Overall Temp Trend: %+.3f °C/yr (p = %.3e)\n\nPlot Elements:\n- Grey shaded backgrounds indicate even years.\n- Solid blue line (#0065F8) represents the overall linear regression trend.\n- Blue shaded area represents the 95%% Confidence Interval (CI).",
+  "Statistics Note:\n- Overall Temp Trend: %+.3f °C/yr (p = %.3e)\n\nPlot Elements:\n- Grey shaded backgrounds indicate even years.\n- Solid GREEN line (#347433) represents the overall linear regression trend.\n- GREEN shaded area represents the 95%% Confidence Interval (CI).",
   slope_temp, pval_temp
 )
 
@@ -167,20 +160,12 @@ note_text_abund <- sprintf(
   cor_pearson, cor_pearson * 100, mean_prop * 100
 )
 
-# 정의된 모든 플롯 Note를 로그 파일에 명확하게 분리하여 기록
 write_log("\n==================================================")
 write_log("[LOGGED PLOT NOTES: TIME SERIES]")
-write_log("--- Plot: Combined Time Series (Dual Axis) ---")
+write_log("--- Plot: Combined Time Series ---")
 for (line in strsplit(note_text_combined, "\n")[[1]]) if(trimws(line) != "") write_log(line)
-write_log("\n--- Plot: Time Series of Temperature (Single Axis) ---")
-for (line in strsplit(note_text_temp, "\n")[[1]]) if(trimws(line) != "") write_log(line)
-write_log("\n--- Plot: Time Series of Total Abundance (Single Axis) ---")
-for (line in strsplit(note_text_abund, "\n")[[1]]) if(trimws(line) != "") write_log(line)
 write_log("==================================================\n")
 
-# -------------------------------------------------------------
-# 짝수 연도 배경 음영 생성을 위한 데이터 프레임 구축
-# -------------------------------------------------------------
 min_year <- as.numeric(format(min(df_combined$Date), "%Y"))
 max_year <- as.numeric(format(max(df_combined$Date), "%Y"))
 years_seq <- min_year:max_year
@@ -193,13 +178,12 @@ shading_ranges <- data.frame(
   year = years_seq
 ) %>% filter(year %% 2 == 0)
 
-# 플롯 테마 공통 설정 (caption 제거)
 my_theme <- theme_minimal(base_size = 14) +
   theme(
     axis.text = element_text(color = "black"),
     axis.line = element_line(color = "black", linewidth = 0.5),
     axis.ticks = element_line(color = "black", linewidth = 0.4),
-    panel.grid.major.x = element_blank(), # 수직 메인 그리드 제거
+    panel.grid.major.x = element_blank(), 
     panel.grid.minor = element_blank(),
     plot.title = element_text(face = "bold", hjust = 0.5),
     legend.position = "bottom",
@@ -212,42 +196,25 @@ if(plot_style == "dual") {
   scale_factor <- max_abund / max_temp
   
   p_time <- ggplot(df_combined, aes(x = Date)) +
-    geom_rect(data = shading_ranges,
-              aes(xmin = xmin, xmax = xmax, ymin = ymin, ymax = ymax),
-              inherit.aes = FALSE, fill = "grey85", alpha = 0.4) +
-    # [수정] 온도 전체 트렌드 라인 (실선, 색상 #0065F8, 투명도 0.15 CI)
-    geom_smooth(aes(y = Temperature), method = "lm", color = "#0065F8", fill = "#0065F8", alpha = 0.15, linetype = "solid", se = TRUE, linewidth = 0.8) +
+    geom_rect(data = shading_ranges, aes(xmin = xmin, xmax = xmax, ymin = ymin, ymax = ymax), inherit.aes = FALSE, fill = "grey85", alpha = 0.4) +
+    geom_smooth(aes(y = Temperature), method = "lm", color = "#347433", fill = "#347433", alpha = 0.15, linetype = "solid", se = TRUE, linewidth = 0.8) +
     geom_line(aes(y = Temperature, color = "Temperature"), linewidth = 0.6) +
     geom_line(aes(y = Reads_Raw / scale_factor, color = "Pre-Filtering Abundance"), linewidth = 0.6, alpha = 0.8) +
     geom_line(aes(y = Reads_Filt / scale_factor, color = "Post-Filtering (Core) Abundance"), linewidth = 0.7, alpha = 0.9) +
     scale_x_date(expand = c(0, 0)) +
-    scale_y_continuous(
-      name = "Temperature (°C)",
-      sec.axis = sec_axis(~ . * scale_factor, name = "Total ASV Abundance", labels = scientific_format(digits = 2))
-    ) +
-    # [수정] Pre-Filtering Abundance 색상을 black으로 변경
-    scale_color_manual(
-      name = "Legend",
-      breaks = c("Temperature", "Pre-Filtering Abundance", "Post-Filtering (Core) Abundance"),
-      values = c("Temperature" = "red", "Pre-Filtering Abundance" = "black", "Post-Filtering (Core) Abundance" = "#D55E00")
-    ) +
+    scale_y_continuous(name = "Temperature (°C)", sec.axis = sec_axis(~ . * scale_factor, name = "Total ASV Abundance", labels = scientific_format(digits = 2))) +
+    scale_color_manual(breaks = c("Temperature", "Pre-Filtering Abundance", "Post-Filtering (Core) Abundance"), values = c("Temperature" = "red", "Pre-Filtering Abundance" = "black", "Post-Filtering (Core) Abundance" = "#D55E00")) +
     labs(title = "Combined Time Series of Temperature and Total Abundance", x = "Sample Date") + 
     my_theme +
-    theme(axis.title.y.left = element_text(color = "red", face = "bold"),
-          axis.title.y.right = element_text(color = "black", face = "bold"))
+    theme(axis.title.y.left = element_text(color = "red", face = "bold"), axis.title.y.right = element_text(color = "black", face = "bold"))
   
   print(p_time)
   if(save_output) ggsave(file.path(out_dir, "01_TimeSeries_DualAxis.tiff"), plot = p_time, width = 11, height = 7, dpi = 300)
-  write_log("이중 축 플롯 출력 완료.")
   
 } else if (plot_style == "single") {
-  
   p_temp <- ggplot(df_combined, aes(x = Date)) +
-    geom_rect(data = shading_ranges,
-              aes(xmin = xmin, xmax = xmax, ymin = ymin, ymax = ymax),
-              inherit.aes = FALSE, fill = "grey85", alpha = 0.4) +
-    # [수정] 온도 전체 트렌드 라인 (실선, 색상 #0065F8, 투명도 0.15 CI)
-    geom_smooth(aes(y = Temperature), method = "lm", color = "#0065F8", fill = "#0065F8", alpha = 0.15, linetype = "solid", se = TRUE, linewidth = 0.8) +
+    geom_rect(data = shading_ranges, aes(xmin = xmin, xmax = xmax, ymin = ymin, ymax = ymax), inherit.aes = FALSE, fill = "grey85", alpha = 0.4) +
+    geom_smooth(aes(y = Temperature), method = "lm", color = "#347433", fill = "#347433", alpha = 0.15, linetype = "solid", se = TRUE, linewidth = 0.8) +
     geom_line(aes(y = Temperature), color = "red", linewidth = 0.6) +
     scale_x_date(expand = c(0, 0)) +
     scale_y_continuous(name = "Temperature (°C)") +
@@ -256,19 +223,12 @@ if(plot_style == "dual") {
     theme(axis.title.y = element_text(color = "red", face = "bold"))
   
   p_abund <- ggplot(df_combined, aes(x = Date)) +
-    geom_rect(data = shading_ranges,
-              aes(xmin = xmin, xmax = xmax, ymin = ymin, ymax = ymax),
-              inherit.aes = FALSE, fill = "grey85", alpha = 0.4) +
+    geom_rect(data = shading_ranges, aes(xmin = xmin, xmax = xmax, ymin = ymin, ymax = ymax), inherit.aes = FALSE, fill = "grey85", alpha = 0.4) +
     geom_line(aes(y = Reads_Raw, color = "Pre-Filtering Abundance"), linewidth = 0.6, alpha = 0.8) +
     geom_line(aes(y = Reads_Filt, color = "Post-Filtering (Core) Abundance"), linewidth = 0.7, alpha = 0.9) +
     scale_x_date(expand = c(0, 0)) +
     scale_y_continuous(name = "Total ASV Abundance", labels = scientific_format(digits = 2)) +
-    # [수정] Pre-Filtering Abundance 색상을 black으로 변경
-    scale_color_manual(
-      name = "Legend",
-      breaks = c("Pre-Filtering Abundance", "Post-Filtering (Core) Abundance"),
-      values = c("Pre-Filtering Abundance" = "black", "Post-Filtering (Core) Abundance" = "#D55E00")
-    ) +
+    scale_color_manual(breaks = c("Pre-Filtering Abundance", "Post-Filtering (Core) Abundance"), values = c("Pre-Filtering Abundance" = "black", "Post-Filtering (Core) Abundance" = "#D55E00")) +
     labs(title = "Time Series of Total Abundance", x = "Sample Date") + 
     my_theme +
     theme(axis.title.y = element_text(color = "black", face = "bold"))
@@ -279,13 +239,12 @@ if(plot_style == "dual") {
     ggsave(file.path(out_dir, "01_TimeSeries_Temperature.tiff"), plot = p_temp, width = 11, height = 5.5, dpi = 300)
     ggsave(file.path(out_dir, "02_TimeSeries_Abundance.tiff"), plot = p_abund, width = 11, height = 6, dpi = 300)
   }
-  write_log("분리된 단일 축 플롯(온도, 풍부도) 출력 완료.")
 }
 
 #################################################
-# Section 5. Monthly Interannual Temperature Trends
+# Section 5. Monthly Interannual Temperature Trends (Nested Strip 적용)
 #################################################
-write_log("월별 수온 변화 트렌드 분석 및 시각화 진행 중...")
+write_log("월별 수온 변화 트렌드 분석 및 시각화 진행 중 (2단 구획 분할 모드)...")
 
 df_temp <- data.frame(sample_data(ps_raw_updated)) %>% 
   select(Date, Temperature) %>% 
@@ -296,7 +255,24 @@ df_temp$Month <- factor(format(df_temp$Date, "%m"),
                         levels = sprintf("%02d", 1:12), 
                         labels = month.name) 
 
-# 통계 검정 (Linear Regression)
+# 국제 표준 별표 생성 함수 (ns는 생략하여 깔끔함 유지)
+get_stars <- function(p) {
+  if (p < 0.001) return("***")
+  if (p < 0.01)  return("**")
+  if (p < 0.05)  return("*")
+  return("") 
+}
+
+# APA 스타일 p-value 변환 함수
+format_apa_pval <- function(p) {
+  if (p < 0.001) return("< .001")
+  if (p < 0.01)  return("< .01")
+  if (p < 0.05)  return("< .05")
+  p_str <- sprintf("%.3f", p)
+  return(paste0("= ", sub("^0", "", p_str)))
+}
+
+# 월별 선형 회귀 통계량 계산 및 통계 텍스트 생성
 trend_stats <- df_temp %>%
   group_by(Month) %>%
   summarise(
@@ -304,54 +280,59 @@ trend_stats <- df_temp %>%
     p_val = summary(lm(Temperature ~ Year))$coefficients[2, 4],
     .groups = "drop"
   ) %>%
+  rowwise() %>%
   mutate(
-    significance = ifelse(p_val < 0.05, "*", "ns"),
-    label = sprintf("Slope: %+.3f\np = %.3f %s", slope, p_val, significance)
-  )
+    stars = get_stars(p_val),
+    p_text = format_apa_pval(p_val),
+    # R plotmath 문법: 통계 텍스트 렌더링용 (이탤릭 p 적용, Slope에 별표 결합)
+    stat_text = paste0("plain('Slope: ", sprintf("%+.3f", slope), stars, ", ') * italic(p) ~ '", p_text, "'")
+  ) %>%
+  ungroup()
 
-# -------------------------------------------------------------
-# 월별 플롯(수치형 X축)을 위한 음영 데이터 프레임 구축
-# -------------------------------------------------------------
+# stat_text를 Factor로 변환하여 Month와 동일한 순서(1~12월) 보장
+trend_stats$stat_text <- factor(trend_stats$stat_text, levels = trend_stats$stat_text)
+
+# 원본 데이터에 통계 텍스트 컬럼 매핑
+df_temp <- df_temp %>%
+  left_join(trend_stats %>% select(Month, stat_text), by = "Month")
+
 shading_ranges_num <- data.frame(
-  xmin = years_seq - 0.5,
-  xmax = years_seq + 0.5,
-  ymin = -Inf,
-  ymax = Inf,
-  year = years_seq
+  xmin = years_seq - 0.5, xmax = years_seq + 0.5, ymin = -Inf, ymax = Inf, year = years_seq
 ) %>% filter(year %% 2 == 0)
 
-# 통계 검정 결과 콘솔 출력
-cat("\n==================================================\n")
-cat("[Monthly Temperature Trend Statistics]\n")
-print(as.data.frame(trend_stats))
-cat("==================================================\n\n")
+monthly_caption <- "Plot Elements & Statistics:\n- Grey shaded backgrounds indicate even years.\n- Solid GREEN line (#347433) represents the linear regression trend for each month.\n- Significance thresholds: * p < .05, ** p < .01, *** p < .001 (ns is completely omitted for a clean look).\n- Statistics are cleanly separated into a nested 2-layer strip above each data plotting area."
 
-label_df <- trend_stats %>%
-  mutate(
-    Year = min(df_temp$Year) + (max(df_temp$Year) - min(df_temp$Year)) / 2,
-    Temperature = Inf
-  )
-
-# 캡션 노트 설정 (플롯에서는 제외, 로그에만 기록)
-monthly_caption <- "Plot Elements & Statistics:\n- Grey shaded backgrounds indicate even years.\n- Solid blue line (#0065F8) represents the linear regression trend for each month.\n- Blue shaded area represents the 95% Confidence Interval (CI).\n- * indicates p < 0.05 (significant trend), ns indicates not significant."
-
-# 월별 플롯 Note(설명 및 통계값)를 로그 파일에 명시적으로 기록
 write_log("\n==================================================")
 write_log("[LOGGED PLOT NOTES: MONTHLY TRENDS]")
 write_log("--- Plot: Monthly Interannual Temperature Trends (3x4 Grid) ---")
 for (line in strsplit(monthly_caption, "\n")[[1]]) if(trimws(line) != "") write_log(line)
 write_log("==================================================\n")
 
-# 월별 수온 변화 플롯 생성
+# 월별 수온 변화 플롯 생성 (ggh4x의 Nested Strip으로 2단 분리 구획 적용)
 p_monthly_temp <- ggplot(df_temp, aes(x = Year, y = Temperature)) +
   geom_rect(data = shading_ranges_num,
             aes(xmin = xmin, xmax = xmax, ymin = ymin, ymax = ymax),
             inherit.aes = FALSE, fill = "grey85", alpha = 0.4) +
   geom_point(alpha = 0.5, color = "red", size = 2) +
-  # 월별 트렌드 라인 (실선, 색상 #0065F8, 투명도 0.15 CI)
-  geom_smooth(method = "lm", color = "#0065F8", fill = "#0065F8", alpha = 0.15, linetype = "solid", se = TRUE) +
-  facet_wrap(~ Month, nrow = 3, ncol = 4) +
-  geom_text(data = label_df, aes(label = label), vjust = 1.3, size = 3.5, fontface = "bold") +
+  geom_smooth(method = "lm", color = "#347433", fill = "#347433", alpha = 0.15, linetype = "solid", se = TRUE) +
+  
+  # [핵심] ggh4x::facet_wrap2 적용: 2개의 변수를 묶어 위아래 2개의 박스로 완벽히 분리 생성
+  facet_wrap2(vars(Month, stat_text), nrow = 3, ncol = 4, 
+              labeller = labeller(stat_text = label_parsed), # 통계 텍스트만 수식 변환
+              strip = strip_nested(
+                # 상/하단 박스의 배경과 테두리 지정 (서로 맞닿는 부분에 가로선이 형성됨)
+                background_x = list(
+                  element_rect(fill = "grey90", color = "black", linewidth = 0.5), # 1단 (월)
+                  element_rect(fill = "grey95", color = "black", linewidth = 0.5)  # 2단 (통계) - 살짝 더 밝은 회색
+                ),
+                # 상/하단 텍스트 스타일 각각 지정
+                text_x = list(
+                  element_text(face = "bold", size = 12, margin = margin(t=4, b=4)),
+                  element_text(face = "plain", size = 11, margin = margin(t=4, b=4))
+                ),
+                by_layer_x = TRUE
+              )) +
+  
   scale_x_continuous(expand = c(0, 0)) +
   labs(
     title = "Monthly Interannual Temperature Trends",
@@ -362,8 +343,6 @@ p_monthly_temp <- ggplot(df_temp, aes(x = Year, y = Temperature)) +
   theme(
     axis.text.x = element_text(angle = 45, hjust = 1, color = "black"),
     axis.text.y = element_text(color = "black"),
-    strip.background = element_rect(fill = "grey90", color = "black"),
-    strip.text = element_text(face = "bold", size = 12),
     plot.title = element_text(face = "bold", hjust = 0.5, size = 16),
     panel.grid.major.x = element_blank(), 
     panel.grid.minor = element_blank()
@@ -374,7 +353,7 @@ print(p_monthly_temp)
 if(save_output) {
   ggsave(file.path(out_dir, "03_Monthly_Temperature_Trends.tiff"), plot = p_monthly_temp, width = 12, height = 9, dpi = 300)
 }
-write_log("월별 수온 변화 플롯 3x4 그리드 출력 완료.")
+write_log("월별 수온 변화 플롯(2단 분할 스트립 적용) 3x4 그리드 출력 완료.")
 
 #################################################
 # Section 6. Final Results & Session Info Logging
