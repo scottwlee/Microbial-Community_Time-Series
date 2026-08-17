@@ -2,15 +2,22 @@
 # [Phase 4 Master Script] 
 # 목적: Phase 3의 S-map 계수들을 자동 인식 및 통합하고, 
 #       이에 맞춰 절대 풍부도를 산출하여 Phase 5(거시 생태학 분석)용 데이터를 완성합니다.
-# 구성: Part 1(병합) -> Part 3(풍부도 산출) -> Part 4(CV) -> Part 5(Scatter)
-# 보장: 입력 데이터 갯수에 자동 적응(Dynamic)하며, 100% 결정론적 연산 수행
+# 
+# [Master Pipeline 목차]
+#   Section 1. Environment & Path Settings (환경 및 경로 설정)
+#   Section 2. Interaction Strength Data Integration (상호작용 강도 병합)
+#   Section 3. Time-Series Visualization of Interaction Strength (IS 시계열 플롯)
+#   Section 4. Absolute Abundance Calculation (절대 풍부도 산출)
+#   Section 5. Time-Series Visualization of Absolute Abundance (풍부도 시계열 플롯 - True Zero 적용)
+#   Section 6. Moving Window CV Calculation & Data Merging (CV 연산 및 데이터 병합)
+#   Section 7. Scatter Plot (CV vs Interaction Strength) (최종 스캐터 플롯)
 ################################################################################
 
 options(stringsAsFactors = FALSE)
 
-# -------------------------------------------------------------------
-# Section 0. Environment Setup & Package Auto-Installation
-# -------------------------------------------------------------------
+################################################################################
+# Section 1. Environment & Path Settings
+################################################################################
 cat("[INFO] Checking and installing required packages for Phase 4...\n")
 required_packages <- c("dplyr", "tidyr", "ggplot2", "scales", "lubridate", "stringr", 
                        "zoo", "mgcv", "cowplot", "parallel", "pbapply")
@@ -24,9 +31,6 @@ suppressPackageStartupMessages({
 })
 theme_set(theme_cowplot())
 
-# -------------------------------------------------------------------
-# Section 1. Master Path Settings & Global Logging
-# -------------------------------------------------------------------
 base_dir       <- "/home/scott/EDM_16SV4_PA"
 
 input_dir_coef <- file.path(base_dir, "03_Phase3_Output/Phase3_Part3_MDR_Smap/Coefficients")
@@ -56,9 +60,9 @@ start_date <- "2012-03-07"
 x_date_range <- c("2012-01-01", "2021-12-31")
 
 ################################################################################
-# [Part 1] Interaction Strength Data Integration
+# Section 2. Interaction Strength Data Integration
 ################################################################################
-write_log("[Part 1] Interaction Strength Data Integration")
+write_log("[Section 2] Interaction Strength Data Integration")
 
 file_temp_is <- file.path(out_data_dir, "Merged_Interaction_Strength_Final.csv")
 
@@ -108,9 +112,9 @@ write.csv(mapped_data, file_temp_is, row.names = FALSE)
 write_log("-> Saved: Merged_Interaction_Strength_Final.csv")
 
 ################################################################################
-# [Part 2] Time-Series Visualization of Interaction Strength
+# Section 3. Time-Series Visualization of Interaction Strength
 ################################################################################
-write_log("[Part 2] Time-Series Visualization (Temp_IS)")
+write_log("[Section 3] Time-Series Visualization (Temp_IS)")
 
 years <- year(as.Date(x_date_range[1])):year(as.Date(x_date_range[2]))
 shading_ranges <- data.frame(
@@ -133,14 +137,14 @@ p_is <- ggplot(mapped_data, aes(x = Sample_Date, y = Interaction_Strength, color
         legend.key.width = unit(1,"cm"), legend.text=element_text(size=9)) +
   guides(color = guide_legend(ncol=10, override.aes=list(linewidth=1, alpha=1)))
 
-output_is_plot_path <- file.path(out_plot_dir, "Phase4_Part2_Interaction_Strength_Plot.tiff")
+output_is_plot_path <- file.path(out_plot_dir, "Phase4_Section3_Interaction_Strength_Plot.tiff")
 ggsave(output_is_plot_path, plot = p_is, device = "tiff", dpi = 600, width = 14, height = 8, compression = "lzw")
 write_log(paste("-> Saved:", output_is_plot_path))
 
 ################################################################################
-# [Part 3] Absolute Abundance Calculation
+# Section 4. Absolute Abundance Calculation
 ################################################################################
-write_log("[Part 3] Absolute Abundance Calculation")
+write_log("[Section 4] Absolute Abundance Calculation")
 
 file_abundance <- file.path(out_data_dir, "Target_ASVs_Absolute_Abundance_Calculated.csv")
 
@@ -176,9 +180,38 @@ write.csv(abund_data, file_abundance, row.names = FALSE)
 write_log("-> Saved: Target_ASVs_Absolute_Abundance_Calculated.csv")
 
 ################################################################################
-# [Part 4 & 5] Moving Window CV & Scatter Plot
+# Section 5. Time-Series Visualization of Absolute Abundance
 ################################################################################
-write_log("[Part 4 & 5] Moving Window CV & Scatter Plot")
+write_log("[Section 5] Time-Series Visualization of Absolute Abundance")
+
+# Phase 5의 "True Zero" 로직을 시각화에도 동일하게 적용하여 빈 날짜를 0으로 강제 렌더링
+all_sample_dates <- unique(abund_data$Sample_Date)
+
+abund_data_plot <- abund_data %>%
+  tidyr::complete(ASV_ID, Sample_Date = all_sample_dates, fill = list(Absolute_Abundance = 0))
+
+p_ab <- ggplot(abund_data_plot, aes(x = Sample_Date, y = Absolute_Abundance, color = ASV_ID)) +
+  geom_rect(data = shading_ranges, aes(xmin=xmin, xmax=xmax, ymin=ymin, ymax=ymax), inherit.aes=FALSE, fill="grey85", alpha=0.4) +
+  geom_hline(yintercept = 0, color = "black", linewidth = 1.0) +
+  geom_vline(xintercept = as.Date(x_date_range[1]), color = "black", linewidth = 1.0) +
+  geom_line(linewidth = 0.3, alpha = 0.6) +
+  scale_x_date(limits = as.Date(x_date_range), date_breaks = "2 years", date_labels = "%Y", expand = c(0,0)) +
+  scale_y_continuous(labels = scales::comma, expand = expansion(mult = c(0, 0.05))) +
+  labs(x = "Sample Date", y = "Absolute Abundance (cells/mL)", color = NULL) +
+  theme_minimal(base_size = 14) +
+  theme(panel.grid = element_blank(), axis.line = element_blank(),
+        axis.ticks = element_line(color="black"), legend.position="bottom",
+        legend.key.width=unit(1,"cm"), legend.text=element_text(size=9)) +
+  guides(color = guide_legend(ncol=10, override.aes=list(linewidth=1, alpha=1)))
+
+output_ab_plot_path <- file.path(out_plot_dir, "Phase4_Section5_Absolute_Abundance_Plot.tiff")
+ggsave(output_ab_plot_path, plot = p_ab, device = "tiff", dpi = 600, width = 14, height = 8, compression = "lzw")
+write_log(paste("-> Saved:", output_ab_plot_path))
+
+################################################################################
+# Section 6. Moving Window CV Calculation & Data Merging
+################################################################################
+write_log("[Section 6] Moving Window CV Calculation & Data Merging")
 
 window_size <- 26; min_valid_points <- 13; min_nonzero <- 2
 cv_fun_strict <- function(x) {
@@ -222,8 +255,13 @@ df_final <- df_merged %>%
   dplyr::filter(Temp_IS >= q_temp[1] & Temp_IS <= q_temp[2]) %>% 
   dplyr::filter(CV >= q_cv[1] & CV <= q_cv[2])
 
-write.csv(df_final, file.path(out_cv_dir, "Part4_Merged_Filtered_CV_IS.csv"), row.names = FALSE)
+write.csv(df_final, file.path(out_cv_dir, "Phase4_Section6_Merged_Filtered_CV_IS.csv"), row.names = FALSE)
 write_log(sprintf("-> Saved Merged CV Data (%d rows).", nrow(df_final)))
+
+################################################################################
+# Section 7. Scatter Plot (CV vs Interaction Strength)
+################################################################################
+write_log("[Section 7] Scatter Plot (CV vs Interaction Strength)")
 
 df_final_plot <- df_final %>%
   dplyr::mutate(ASV_Num = as.numeric(str_extract(ASV, "\\d+")), ASV = reorder(factor(ASV), ASV_Num))
@@ -239,7 +277,7 @@ p_scatter <- ggplot(data = df_final_plot, aes(x = Temp_IS, y = CV, color = ASV))
         legend.position="bottom", legend.text=element_text(size=9)) +
   guides(color = guide_legend(ncol=10, override.aes=list(size=3, alpha=1)))
 
-output_scatter_path <- file.path(out_scat_dir, "Part5_Raw_Scatter_CV_vs_TempIS.tiff")
+output_scatter_path <- file.path(out_scat_dir, "Phase4_Section7_Raw_Scatter_CV_vs_TempIS.tiff")
 ggsave(output_scatter_path, plot = p_scatter, device = "tiff", dpi = 600, width = 14, height = 10, compression = "lzw")
 write_log(paste("-> Saved:", output_scatter_path))
 
