@@ -134,11 +134,42 @@ colnames(df_filt)[2] <- "Reads_Filt"
 df_combined <- merge(df_raw, df_filt, by = "Date", all = FALSE)
 df_combined <- na.omit(df_combined)
 
+# -------------------------------------------------------------
+# [통계 검정] 전체 기간 수온 트렌드 분석 (Anomaly-based Linear Regression)
+# 계절성(Seasonality)에 의한 오차를 제거하여 정확한 장기 트렌드 p-value를 산출함.
+# -------------------------------------------------------------
 df_combined$DecYear <- decimal_date(df_combined$Date)
-fit_temp <- lm(Temperature ~ DecYear, data = df_combined)
-slope_temp <- coef(fit_temp)[2]
-pval_temp <- summary(fit_temp)$coefficients[2, 4]
-sig_temp <- ifelse(pval_temp < 0.05, "Significant", "Not Significant")
+
+# 1. 월별 기준점(Baseline) 및 수온 편차(Anomaly) 계산
+df_combined <- df_combined %>%
+  mutate(Month_Fct = format(Date, "%m")) %>%
+  group_by(Month_Fct) %>%
+  mutate(
+    Monthly_Mean_Temp = mean(Temperature, na.rm = TRUE),
+    Temp_Anomaly = Temperature - Monthly_Mean_Temp
+  ) %>%
+  ungroup()
+
+# 2. 계절성이 제거된 '수온 편차(Anomaly)'를 이용한 엄격한 선형 회귀
+fit_temp_anomaly <- lm(Temp_Anomaly ~ DecYear, data = df_combined)
+slope_temp <- coef(fit_temp_anomaly)[2]
+pval_temp <- summary(fit_temp_anomaly)$coefficients[2, 4]
+
+# 국제 표준 유의성 별표 
+get_stars_global <- function(p) {
+  if (p < 0.001) return("***")
+  if (p < 0.01)  return("**")
+  if (p < 0.05)  return("*")
+  return("") 
+}
+sig_stars <- get_stars_global(pval_temp)
+
+cat("\n==================================================\n")
+cat("[Overall Temperature Trend Statistics (De-seasonalized Anomaly)]\n")
+cat(sprintf("Annual Slope : %+.3f °C / year %s\n", slope_temp, sig_stars))
+cat(sprintf("P-value      : %.3e\n", pval_temp))
+cat("==================================================\n\n")
+write_log(sprintf("Overall Temp Trend (Anomaly): %+.3f °C/year %s, p=%.3e", slope_temp, sig_stars, pval_temp))
 
 write_log(sprintf("Overall Temp Trend: %+.3f °C/year, p=%.3e", slope_temp, pval_temp))
 
