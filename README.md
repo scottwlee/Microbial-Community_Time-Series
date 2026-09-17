@@ -14,7 +14,7 @@
 ### 3. 헬퍼 함수 및 공통 모듈 (Helper Functions)
 - `F2_HelperFunction_MDR_Block.R`: 시계열 블록 연산 및 주요 데이터 처리에 필요한 사용자 정의 함수 모음
 
-====================================================================================================
+================================================================================
 
 # Microbial-Community_Time-Series (US)
 A collection of R scripts designed for preprocessing, environmental trend analysis, and time-series modeling of microbial community datasets.
