@@ -76,7 +76,7 @@ enable_save_outputs <- TRUE
 # 경로 및 동적 파일명 설정
 # ------------------------------------------------------------------- #
 base_dir   <- "/home/scott/EDM_16SV4_PA"
-input_dir  <- file.path(base_dir, "04_Phase4_Output/01_Data_Integration")
+input_dir  <- file.path(base_dir, "04_Phase4_V2_Output/01_Data_Integration")
 out_dir    <- file.path(base_dir, "05_Phase5_Output/03_Unified_Taxonomic_Composition") # 넘버링 갱신
 
 if (enable_save_outputs && !dir.exists(out_dir)) dir.create(out_dir, recursive = TRUE)
