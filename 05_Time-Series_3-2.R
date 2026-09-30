@@ -58,7 +58,7 @@ enable_save_outputs <- TRUE
 # 경로 및 동적 파일명 설정 (자동 적용 - 폴더명 Part2 에 맞게 수정)
 # ------------------------------------------------------------------- #
 base_dir   <- "/home/scott/EDM_16SV4_PA"
-input_dir  <- file.path(base_dir, "04_Phase4_Output/01_Data_Integration")
+input_dir  <- file.path(base_dir, "04_Phase4_V2_Output/01_Data_Integration")
 out_dir    <- file.path(base_dir, "05_Phase5_Output/02_Seasonal_Phenology")
 
 if (enable_save_outputs && !dir.exists(out_dir)) dir.create(out_dir, recursive = TRUE)
