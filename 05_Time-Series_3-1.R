@@ -9,9 +9,9 @@
 # 특징:
 #   1) [핵심 혁신: True Zero-Included] tidyr::complete를 사용하여 특정 종이 
 #      관찰되지 않은(결측된) 모든 샘플링 날짜를 0으로 강제 복원한 뒤 진짜 통계를 산출.
-#   2) [논문 통일성 확보] 향후 분석과 완벽히 동일한 생태학적 기준(Zero-inclusion) 적용.
-#   3) [클러스터링 검증] Silhouette Score, Uncertainty, ANOVA를 통한 3분할 타당성 입증.
-#   4) [로깅 고도화] 플롯별 Title, Note 및 통계치(GAM, GMM)를 로그 파일에 명시적으로 기록.
+#   2) [논문 방어용 자동 통계 라우팅] 등분산성(Levene's test) 및 정규성(Shapiro-Wilk) 
+#      가정 검정을 수행한 후, 조건에 따라 ANOVA 또는 Welch's ANOVA를 자동 선택.
+#   3) [로깅 고도화] 포맷팅 에러 방지를 위해 paste0 기반의 직관적 로깅 적용.
 # ------------------------------------------------------------------- #
 
 options(stringsAsFactors = FALSE)
@@ -19,8 +19,7 @@ options(stringsAsFactors = FALSE)
 # ------------------------------------------------------------------- #
 # Section 0. Environment Setup & Package Auto-Installation
 # ------------------------------------------------------------------- #
-# [NEW] cluster 패키지 추가 (Silhouette Score 계산용)
-required_packages <- c("dplyr", "tidyr", "ggplot2", "mgcv", "cowplot", "mclust", "cluster")
+required_packages <- c("dplyr", "tidyr", "ggplot2", "mgcv", "cowplot", "mclust", "cluster", "car")
 new_packages <- required_packages[!(required_packages %in% installed.packages()[,"Package"])]
 if(length(new_packages)) {
   cat("[System] Installing missing packages: ", paste(new_packages, collapse = ", "), "\n")
@@ -35,41 +34,25 @@ suppressPackageStartupMessages({
   library(cowplot)
   library(mclust)
   library(cluster)
+  library(car)
 })
 theme_set(theme_cowplot())
 
 #################################################
 # USER SETTINGS (스위치 및 파라미터 제어)
 #################################################
-# [1] 요약 통계량 선택 
-#     - 옵션: "median", "mean"
-#     - 권장: "median" (극단적인 이상치에 덜 민감함)
 summary_method  <- "median"  
-
-# [2] 플롯 시각화 색상 모드 선택
-#     - 옵션: TRUE (군집별 3색 적용), FALSE (전체 단일 흑백 적용)
 enable_gmm_colors <- TRUE 
-
-# [3] GMM 클러스터 개수
-#     - 옵션: 양의 정수
-#     - 권장: 3 (Negative, Neutral, Positive 생태학적 3분할)
 g_clusters      <- 3 
-
-# [4] 이상치 필터링 파라미터 (IQR 기반)
-#     - iqr_multiplier : 필터링 강도 (권장: 1.5 - 통상적인 박스플롯 수염 기준)
-#     - iqr_filter_mode: 필터링 적용 축 (옵션: "x", "y", "both" | 권장: "y" - 종속변수 극단값만 제거)
 iqr_multiplier  <- 1.5
 iqr_filter_mode <- "y"
-
-# [5] 결과 저장 마스터 스위치
-#     - 옵션: TRUE (지정된 폴더에 플롯과 로그 파일 저장), FALSE (RStudio 뷰어 및 콘솔에만 출력)
 enable_save_outputs <- TRUE
 
 # ------------------------------------------------------------------- #
 # 경로 및 파일명 설정
 # ------------------------------------------------------------------- #
 base_dir   <- "/home/scott/EDM_16SV4_PA"
-input_dir  <- file.path(base_dir, "04_Phase4_Output/01_Data_Integration")
+input_dir  <- file.path(base_dir, "04_Phase4_V2_Output/01_Data_Integration")
 out_dir    <- file.path(base_dir, "05_Phase5_Output/01_Macro_Ecological_Traits")
 
 if (enable_save_outputs && !dir.exists(out_dir)) dir.create(out_dir, recursive = TRUE)
@@ -133,41 +116,58 @@ tryCatch({
     dplyr::filter(!is.na(agg_IS) & !is.na(agg_CV) & !is.na(asv_sd) & asv_mean > 0)
   
   # ------------------------------------------------------------------- #
-  # Section 3. Apply GMM Clustering & Validation
+  # Section 3. Apply GMM Clustering & Advanced Validation Routing
   # ------------------------------------------------------------------- #
-  log_msg("Applying GMM Clustering and Validating Model...")
-  set.seed(414)
-  gmm_model <- Mclust(asv_summary$agg_IS, G = g_clusters)
-  cluster_means <- gmm_model$parameters$mean
-  cluster_order <- order(cluster_means) 
-  mapped_clusters <- factor(gmm_model$classification, levels = cluster_order, labels = c("1_Negative", "2_Neutral", "3_Positive"))
-  asv_summary$Cluster <- mapped_clusters
+  log_msg("Applying GMM Clustering and Validating Model...");
+  set.seed(414);
+  gmm_model <- Mclust(asv_summary$agg_IS, G = g_clusters);
+  cluster_means <- gmm_model$parameters$mean;
+  cluster_order <- order(cluster_means); 
+  mapped_clusters <- factor(gmm_model$classification, levels = cluster_order, labels = c("1_Negative", "2_Neutral", "3_Positive"));
+  asv_summary$Cluster <- mapped_clusters;
   
-  # 1) 실루엣 지수 (Silhouette Score) 계산
-  dist_mat <- dist(asv_summary$agg_IS)
-  sil_res <- cluster::silhouette(as.numeric(mapped_clusters), dist_mat)
-  mean_sil_score <- mean(sil_res[, "sil_width"])
+  dist_mat <- dist(asv_summary$agg_IS);
+  sil_res <- cluster::silhouette(as.numeric(mapped_clusters), dist_mat);
+  mean_sil_score <- mean(sil_res[, "sil_width"]);
+  mean_uncertainty <- mean(gmm_model$uncertainty);      base_aov <- aov(agg_IS ~ Cluster, data = asv_summary);   aov_resid <- residuals(base_aov);   if(length(aov_resid) > 5000) { aov_resid <- sample(aov_resid, 5000) };   shapiro_res <- shapiro.test(aov_resid);      levene_res <- car::leveneTest(agg_IS ~ Cluster, data = asv_summary);   levene_pval <- levene_res$`Pr(>F)`[1];
   
-  # 2) 분류 불확실성 (Classification Uncertainty) 계산
-  mean_uncertainty <- mean(gmm_model$uncertainty)
+  kw_res <- kruskal.test(agg_IS ~ Cluster, data = asv_summary);
   
-  # 3) 그룹 간 차이 검정 (ANOVA)
-  aov_res <- aov(agg_IS ~ Cluster, data = asv_summary)
-  pval_aov <- summary(aov_res)[[1]][["Pr(>F)"]][1]
-  pval_aov_str <- ifelse(pval_aov < 0.001, "p < 0.001", format.pval(pval_aov, digits = 3))
+  if (levene_pval >= 0.05) {
+    selected_test_name <- "Standard One-way ANOVA";
+    final_stat <- summary(base_aov)[[1]][["F value"]][1];
+    final_pval <- summary(base_aov)[[1]][["Pr(>F)"]][1];
+    stat_label <- "F";
+  } else {
+    selected_test_name <- "Welch's ANOVA (Variance Heterogeneity Adjusted)";
+    welch_res <- oneway.test(agg_IS ~ Cluster, data = asv_summary, var.equal = FALSE);
+    final_stat <- welch_res$statistic;
+    final_pval <- welch_res$p.value;
+    stat_label <- "F";
+  };
   
-  log_msg("\n===================================================================")
-  log_msg(" [Analysis Parameters & Clustering Info]")
-  log_msg(sprintf(" - Plot Mode        : %s", ifelse(enable_gmm_colors, "Grouped (GMM Colors)", "Single Cluster (Mono Color)")))
-  log_msg(sprintf(" - Summary Method   : %s", toupper(summary_method)))
-  log_msg(sprintf(" - Zero Handling    : True Zero-Included (via tidyr::complete)"))
-  log_msg(sprintf(" - Total ASVs Mapped: %d", nrow(asv_summary)))
-  log_msg(sprintf(" - Outlier Filter   : %.1f IQR (Axis: %s)", iqr_multiplier, toupper(iqr_filter_mode)))
-  log_msg("\n [GMM Clustering Validation (G = 3)]")
-  log_msg(sprintf(" -> Mean Silhouette Score : %.3f (Target: > 0.5 for reasonable structure)", mean_sil_score))
-  log_msg(sprintf(" -> Mean Uncertainty      : %.5f (Target: Close to 0 for clear boundaries)", mean_uncertainty))
-  log_msg(sprintf(" -> ANOVA (Group Diff)    : F = %.2f, %s", summary(aov_res)[[1]][["F value"]][1], pval_aov_str))
-  log_msg("===================================================================\n")
+  format_pval <- function(p) ifelse(p < 0.001, "p < 0.001", paste0("p = ", round(p, 4)));
+  
+  log_msg("\n===================================================================");
+  log_msg(" [Analysis Parameters & Clustering Info]");
+  log_msg(paste0(" - Plot Mode        : ", ifelse(enable_gmm_colors, "Grouped (GMM Colors)", "Single Cluster (Mono Color)")));
+  log_msg(paste0(" - Summary Method   : ", toupper(summary_method)));
+  log_msg(" - Zero Handling    : True Zero-Included (via tidyr::complete)");
+  log_msg(paste0(" - Total ASVs Mapped: ", nrow(asv_summary)));
+  log_msg(paste0(" - Outlier Filter   : ", iqr_multiplier, " IQR (Axis: ", toupper(iqr_filter_mode), ")"));
+  
+  log_msg("\n [GMM Clustering Validation (G = 3)]");
+  log_msg(paste0(" -> Mean Silhouette Score : ", round(mean_sil_score, 3), " (Target: > 0.5 for reasonable structure)"));
+  log_msg(paste0(" -> Mean Uncertainty      : ", round(mean_uncertainty, 5), " (Target: Close to 0 for clear boundaries)"));
+  
+  log_msg("\n [Statistical Assumption Tests]");
+  log_msg(paste0(" -> Normality (Shapiro-Wilk)       : W = ", round(shapiro_res$statistic, 3), ", ", format_pval(shapiro_res$p.value)));   log_msg(paste0(" -> Homoscedasticity (Levene's)    : F = ", round(levene_res$`F value`[1], 3), ", ", format_pval(levene_pval)));
+  
+  log_msg("\n [Selected Group Difference Test]");
+  log_msg(paste0(" -> Applied Test Model             : ", selected_test_name));
+  log_msg(paste0(" -> Main Result                    : ", stat_label, " = ", round(final_stat, 2), ", ", format_pval(final_pval)));
+  log_msg(paste0(" -> Non-parametric Reference (KW)  : Chi-squared = ", round(kw_res$statistic, 2), ", ", format_pval(kw_res$p.value)));
+  log_msg("===================================================================\n");
   
   # ------------------------------------------------------------------- #
   # Section 4. Independent IQR Filtering
@@ -204,10 +204,9 @@ tryCatch({
     pval <- gam_sum$s.table[1, "p-value"]
     pval_str <- ifelse(pval < 0.001, "p < 0.001", format.pval(pval, digits = 3))
     
-    log_msg(sprintf(" [%s]", plot_title))
-    log_msg(sprintf("  -> Note: %s", plot_note))
-    log_msg(sprintf("  -> GAM Stats: edf = %.2f, F = %.2f, %s, Deviance Explained = %.1f%%", 
-                    gam_sum$s.table[1, "edf"], gam_sum$s.table[1, "F"], pval_str, gam_sum$dev.expl * 100))
+    log_msg(paste0(" [", plot_title, "]"))
+    log_msg(paste0("  -> Note: ", plot_note))
+    log_msg(paste0("  -> GAM Stats: edf = ", round(gam_sum$s.table[1, "edf"], 2), ", F = ", round(gam_sum$s.table[1, "F"], 2), ", ", pval_str, ", Deviance Explained = ", round(gam_sum$dev.expl * 100, 1), "%"))
     log_msg("")
     
     new_data <- data.frame(agg_IS = seq(min(data$agg_IS), max(data$agg_IS), length.out = 200))
