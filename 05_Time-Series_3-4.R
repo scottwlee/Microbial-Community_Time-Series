@@ -2,15 +2,6 @@
 
 # ------------------------------------------------------------------- #
 # [Phase 5 - Part 4 (Master Version): Auto-Linked POW & Climate Impact]
-# (※ 기록: 이 스크립트는 과거 "04_Time-Series_3-2.R" 스크립트의 "Phase 5 - Part 7 & 9"에서 통합, 이관 및 재정비된 코드입니다.)
-#
-# 목적: Tukey's HSD 그룹핑(Letter Grouping)을 통해 통계적으로 완벽하게 정의된 
-#       최전성기(POW)를 추출하고, 이를 시차 보정 억제 분석으로 자동 연동함.
-# 특징:
-#   1) [Tukey HSD 그룹핑] 'a' 그룹(최고 생물량과 통계적 차이가 없는 달) 자동 추출.
-#   2) [Two-way ANOVA] 10년 시계열 특성을 반영하여 연도(Year)를 블록 효과로 통제.
-#   3) [로깅 고도화] 단일 통합 로그파일에 분석 파라미터, 플롯 Title, Note, 통계치 기록.
-#   4) [다중 플롯 분리] 통합 패널 플롯 2종 외에 5개의 개별 플롯 모두 독립적으로 저장.
 # ------------------------------------------------------------------- #
 
 options(stringsAsFactors = FALSE)
@@ -18,7 +9,7 @@ options(stringsAsFactors = FALSE)
 # ------------------------------------------------------------------- #
 # Section 0. Environment Setup & Package Auto-Installation
 # ------------------------------------------------------------------- #
-required_packages <- c("dplyr", "tidyr", "ggplot2", "mgcv", "cowplot", "mclust", "stats", "agricolae")
+required_packages <- c("dplyr", "tidyr", "ggplot2", "mgcv", "cowplot", "mclust", "stats", "agricolae", "car")
 new_packages <- required_packages[!(required_packages %in% installed.packages()[,"Package"])]
 if(length(new_packages)) {
   cat("[System] Installing missing packages: ", paste(new_packages, collapse = ", "), "\n")
@@ -34,48 +25,34 @@ suppressPackageStartupMessages({
   library(mclust)
   library(stats)
   library(agricolae) 
+  library(car)
 })
 theme_set(theme_cowplot())
 
 #################################################
 # USER SETTINGS (스위치 및 파라미터 제어)
 #################################################
-
-# [1] 공통 GMM 클러스터 설정
-# - summary_method: 온도 민감도(IS) 요약 대푯값 기준 (옵션: "median"(권장), "mean")
-# - g_clusters    : 군집 분할 수 (권장: 3)
-# - target_cluster: POW 및 기후 변화 억제 효과를 검증할 메인 타겟 군집 (옵션: "1_Negative", "2_Neutral", "3_Positive")
 summary_method <- "median"  
 g_clusters     <- 3 
 target_cluster <- "1_Negative" 
 
-# [2] 생태적 최전성기(Peak Window) 선별 방식 설정
-# - peak_selection_method: 최전성기를 정의하는 통계 알고리즘.
-#   * "tukey": 연도 블록 효과를 통제한 ANOVA 후 Tukey HSD 사후검정으로 최상위 그룹 추출 (논문 방어용 권장)
-#   * "kmeans": 월별 궤적을 순수 기계학습(거리 기반)으로 분할
-# - peak_k_clusters: (kmeans 선택 시) 분할할 계층 수 (권장: 3)
 peak_selection_method <- "tukey"  
 peak_k_clusters       <- 3  
-
-# [3] 결과 저장 마스터 스위치
-# - 옵션: TRUE (폴더에 플롯과 로그 자동 저장), FALSE (뷰어 출력만)
-enable_save_outputs <- TRUE
+enable_save_outputs   <- TRUE
 
 # ------------------------------------------------------------------- #
 # 시각화 공통 색상 테마 설정
 # ------------------------------------------------------------------- #
-neg_base_color <- "#0065F8" # Negative 데이터 포인트 및 박스플롯 테두리 (Blue)
-neg_fill       <- "#99C2FF" # Negative 박스플롯 내부 배경색 (Light Blue)
-trend_color    <- "#347433" # 생물학적 & 물리적 추세선 및 CI (Green)
+neg_base_color <- "#0065F8" 
+neg_fill       <- "#99C2FF" 
+trend_color    <- "#347433" 
 
 # ------------------------------------------------------------------- #
-# 경로 및 동적 파일명 설정 (넘버링 개편: Part 4)
+# 경로 및 동적 파일명 설정
 # ------------------------------------------------------------------- #
 base_dir   <- "/home/scott/EDM_16SV4_PA"
-input_dir  <- file.path(base_dir, "04_Phase4_Output/01_Data_Integration")
+input_dir  <- file.path(base_dir, "04_Phase4_V2_Output/01_Data_Integration")
 smap_dir   <- file.path(base_dir, "03_Phase3_Output/Phase3_Part3_MDR_Smap")
-
-# 통합 디렉토리 설정
 out_dir    <- file.path(base_dir, "05_Phase5_Output/04_Auto_Linked_POW_Impact")
 
 if (enable_save_outputs && !dir.exists(out_dir)) dir.create(out_dir, recursive = TRUE)
@@ -84,10 +61,8 @@ file_abundance <- file.path(input_dir, "Target_ASVs_Absolute_Abundance_Calculate
 file_temp_is   <- file.path(input_dir, "Merged_Interaction_Strength_Final.csv")
 file_smap_sum  <- file.path(smap_dir, "Phase3_Part3_MDR_Smap_Summary.csv")
 
-# 파일명 접두사 Part4_ 적용 및 단일 통합 로그 생성
-log_file <- file.path(out_dir, paste0("Part4_", toupper(summary_method), "_", toupper(peak_selection_method), "_Integrated_Log.txt"))
+log_file       <- file.path(out_dir, paste0("Part4_", toupper(summary_method), "_", toupper(peak_selection_method), "_Integrated_Log.txt"))
 
-# 플롯 파일명 지정 (개별 및 결합)
 f_plot_env     <- file.path(out_dir, paste0("Part4_", toupper(summary_method), "_1_Indiv_Env.tiff"))
 f_plot_pheno   <- file.path(out_dir, paste0("Part4_", toupper(summary_method), "_2_Indiv_Phenology.tiff"))
 f_plot_anova   <- file.path(out_dir, paste0("Part4_", toupper(summary_method), "_3_Indiv_ANOVA.tiff"))
@@ -105,14 +80,16 @@ log_msg <- function(msg) {
   }
 }
 
+format_pval <- function(p) ifelse(p < 0.001, "p < 0.001", paste0("p = ", round(p, 4)))
+
 tryCatch({
   log_msg("\n===================================================================")
   log_msg(" [Phase 5 - Part 4: Auto-Linked POW & Climate Impact Pipeline]")
   log_msg(" [Analysis Parameters & Settings]")
-  log_msg(sprintf(" - Target Cluster        : %s", target_cluster))
-  log_msg(sprintf(" - Summary Method        : %s", toupper(summary_method)))
-  log_msg(sprintf(" - Peak Selection Method : %s", toupper(peak_selection_method)))
-  log_msg(sprintf(" - Zero Handling         : True Zero-Included"))
+  log_msg(paste0(" - Target Cluster        : ", target_cluster))
+  log_msg(paste0(" - Summary Method        : ", toupper(summary_method)))
+  log_msg(paste0(" - Peak Selection Method : ", toupper(peak_selection_method)))
+  log_msg(" - Zero Handling         : True Zero-Included")
   log_msg("===================================================================\n")
   
   # ------------------------------------------------------------------- #
@@ -147,12 +124,14 @@ tryCatch({
   set.seed(414)
   gmm_model <- Mclust(asv_summary$agg_IS, G = g_clusters)
   cluster_order <- order(gmm_model$parameters$mean) 
+  
+  # 에러 방지 처리 완료 (백슬래시 제거)
   asv_clusters <- asv_summary %>%
     dplyr::mutate(Cluster = factor(gmm_model$classification, levels = cluster_order, labels = c("1_Negative", "2_Neutral", "3_Positive"))) %>%
     dplyr::select(ASV, Cluster)
-  
+
   # ------------------------------------------------------------------- #
-  # Section 2. Peak Window Definition 
+  # Section 2. Peak Window Definition & Assumption Tests
   # ------------------------------------------------------------------- #
   log_msg("\n>>> STARTING PEAK WINDOW DEFINITION <<<")
   
@@ -183,9 +162,29 @@ tryCatch({
     )
   
   target_months <- c()
+  assumption_log <- ""
   
   if (peak_selection_method == "tukey") {
     aov_model <- aov(Log_Abundance ~ Month_Fct + Year_Fct, data = df_cluster_monthly)
+    
+    # 1) 가정 검정 (Assumption Tests)
+    aov_resid <- residuals(aov_model)
+    if(length(aov_resid) > 5000) { aov_resid <- sample(aov_resid, 5000) }
+    shapiro_res <- shapiro.test(aov_resid)
+    
+    levene_res <- car::leveneTest(Log_Abundance ~ Month_Fct, data = df_cluster_monthly)
+    levene_pval <- levene_res$`Pr(>F)`[1]
+    
+    # 비모수 교차검증 (Kruskal-Wallis)
+    kw_res <- kruskal.test(Log_Abundance ~ Month_Fct, data = df_cluster_monthly)
+    
+    assumption_log <- paste0(
+      "\n [Statistical Assumption Tests]\n",
+      " -> Normality (Shapiro-Wilk)       : W = ", round(shapiro_res$statistic, 3), ", ", format_pval(shapiro_res$p.value), "\n",       " -> Homoscedasticity (Levene's)    : F = ", round(levene_res$`F value`[1], 3), ", ", format_pval(levene_pval), "\n",
+      " -> Non-parametric Reference (KW)  : Chi-squared = ", round(kw_res$statistic, 2), ", ", format_pval(kw_res$p.value)
+    )
+    
+    # Tukey HSD 진행
     tukey_res <- HSD.test(aov_model, "Month_Fct", group = TRUE)
     top_group <- tukey_res$groups
     
@@ -194,6 +193,7 @@ tryCatch({
     
     f_val <- summary(aov_model)[[1]][["F value"]][1]
     pval_anova <- summary(aov_model)[[1]][["Pr(>F)"]][1]
+    
   } else if (peak_selection_method == "kmeans") {
     monthly_means <- df_cluster_monthly %>% dplyr::group_by(Month, Month_Fct) %>% dplyr::summarise(mean_abund = mean(Log_Abundance), .groups="drop")
     set.seed(414)
@@ -215,17 +215,22 @@ tryCatch({
   
   df_cluster_monthly <- df_cluster_monthly %>% dplyr::mutate(Is_Peak = ifelse(Month %in% target_months, peak_label, "Non-Peak"))
   
-  pval_text_p7 <- ifelse(pval_anova < 0.001, "p < 0.001", sprintf("p = %.3f", pval_anova))
+  pval_text_p7 <- format_pval(pval_anova)
   
-  title_C <- paste("C. Statistical Validation of", peak_label)
-  note_C  <- sprintf("Peak Window defined via %s on True Zero-Included data.", toupper(peak_selection_method))
+  title_C <- paste0("C. Statistical Validation of ", peak_label);
+  note_C  <- paste0("Peak Window defined via ", toupper(peak_selection_method), " on True Zero-Included data.");
   
-  log_msg("\n-------------------------------------------------------------------")
-  log_msg(sprintf("[Plot C: %s]", title_C))
-  log_msg(sprintf(" -> Note                     : %s", note_C))
-  log_msg(sprintf(" -> Two-way ANOVA (Block: Year) F-value : %.2f", f_val))
-  log_msg(sprintf(" -> P-value                             : %s", pval_text_p7))
-  log_msg("-------------------------------------------------------------------\n")
+  log_msg("\n-------------------------------------------------------------------");
+  log_msg(paste0("[Plot C: ", title_C, "]"));
+  log_msg(paste0(" -> Note                           : ", note_C));
+  log_msg(paste0(" -> Two-way ANOVA (Block: Year)    : F = ", round(f_val, 2), ", ", pval_text_p7));
+  
+  if (peak_selection_method == "tukey") {
+    log_msg(" [Statistical Assumption Tests]");
+    log_msg(paste0(" -> Normality (Shapiro-Wilk)       : W = ", round(shapiro_res$statistic, 3), ", ", format_pval(shapiro_res$p.value)));     log_msg(paste0(" -> Homoscedasticity (Levene's)    : F = ", round(levene_res$`F value`[1], 3), ", ", format_pval(levene_pval)));
+    log_msg(paste0(" -> Non-parametric Reference (KW)  : Chi-squared = ", round(kw_res$statistic, 2), ", ", format_pval(kw_res$p.value)));
+  }
+  log_msg("-------------------------------------------------------------------\n");
   
   # ------------------------------------------------------------------- #
   # Section 3. Plotting Peak Window Definition (Individual & Combined)
@@ -233,14 +238,14 @@ tryCatch({
   p7_temp <- ggplot(df_env, aes(x = Month, y = Temperature)) +
     geom_jitter(color = "darkred", alpha = 0.3, width = 0.2) +
     geom_smooth(method = "gam", formula = y ~ s(x, bs = "cc", k = 12), color = trend_color, fill = trend_color, alpha = 0.2, linewidth=1.5) +
-    scale_x_continuous(breaks = 1:12, labels = month.abb) +
+    scale_x_continuous(breaks = 1:12, labels = month.abb, expand = expansion(add = 0.5)) +
     labs(title = "A. Physical Environment", y = "Temp (°C)") + 
     theme(axis.title.x = element_blank(), axis.text.x = element_blank(), plot.title = element_text(face = "bold"))
   
   p7_abund <- ggplot(df_cluster_monthly, aes(x = Month, y = Log_Abundance)) +
     geom_jitter(color = neg_base_color, alpha = 0.5, size = 1.5, width = 0.2) +
     geom_smooth(method = "gam", formula = y ~ s(x, bs = "cc", k = 12), color = trend_color, fill = trend_color, alpha = 0.2, linewidth = 1.5) +
-    scale_x_continuous(breaks = 1:12, labels = month.abb) +
+    scale_x_continuous(breaks = 1:12, labels = month.abb, expand = expansion(add = 0.5)) +
     labs(title = paste0("B. Biological Phenology (", target_cluster, ")"), x = "Month", y = "Log10(Cluster Abundance + 1)") + 
     theme(plot.title = element_text(face = "bold"))
   
@@ -250,7 +255,7 @@ tryCatch({
     geom_boxplot(alpha = 0.6, outlier.shape = NA) + 
     geom_jitter(color = neg_base_color, width = 0.15, alpha = 0.6, size = 1.2) +
     scale_fill_manual(values = fill_palette) + 
-    labs(title = title_C, subtitle = paste("Two-way ANOVA (Month Effect):", pval_text_p7), x = "Month of the Year", y = "Log10(Cluster Abundance + 1)") +
+    labs(title = title_C, subtitle = paste0("Two-way ANOVA (Month Effect): ", pval_text_p7), x = "Month of the Year", y = "Log10(Cluster Abundance + 1)") +
     theme(legend.position = "top", legend.title = element_blank(), plot.title = element_text(face = "bold")) 
   
   p7_combined <- plot_grid(plot_grid(p7_temp, p7_abund, ncol = 1, align = "v"), p7_anova, ncol = 2, rel_widths = c(1, 1.2))
@@ -259,7 +264,7 @@ tryCatch({
   # Section 4. Linkage & Lag-Adjusted Climate Impact
   # ------------------------------------------------------------------- #
   eco_window_months <- target_months 
-  log_msg(sprintf("\n>>> [LINKAGE BRIDGE] POW (%s) automatically passed to Climate Impact Section <<<", paste(eco_window_months, collapse=",")))
+  log_msg(paste0("\n>>> [LINKAGE BRIDGE] POW (Months ", paste(eco_window_months, collapse=","), ") automatically passed to Climate Impact Section <<<"))
   log_msg(">>> STARTING LAG-ADJUSTED CLIMATE IMPACT <<<\n")
   
   df_env_daily <- df_ab_raw %>% dplyr::select(Date = Sample_Date, Temperature) %>% dplyr::distinct() %>% dplyr::filter(!is.na(Temperature)) %>% dplyr::arrange(Date)
@@ -290,37 +295,35 @@ tryCatch({
   gam_model <- mgcv::gam(Log_Abund ~ s(Temperature, k=6), data = analysis_df, method="REML")
   pval_direct <- summary(gam_model)$s.table[1, 4]
   
-  format_pval <- function(p) ifelse(p < 0.001, "p < 0.001", sprintf("p = %.3f", p))
-  
   title_supp <- "D. Suppression of Psychrophilic Engine"
   title_therm <- "E. High-Resolution POW Thermal Limitation"
-  note_impact <- sprintf("Analyzed strictly within the Dynamically Linked POW (Months %s). Abundances are phase-aligned using True Zero-Included Best_TP.", paste(eco_window_months, collapse="-"))
+  note_impact <- paste0("Analyzed strictly within the Dynamically Linked POW (Months ", paste(eco_window_months, collapse="-"), "). Abundances are phase-aligned using True Zero-Included Best_TP.")
   
   log_msg("-------------------------------------------------------------------")
-  log_msg(sprintf("[Plot D: %s]", title_supp))
-  log_msg(sprintf(" -> Note                     : %s", note_impact))
-  log_msg(sprintf(" -> Linear Regression Slope  : %.4f", slope_abund))
-  log_msg(sprintf(" -> P-value                  : %s", format_pval(pval_abund)))
+  log_msg(paste0("[Plot D: ", title_supp, "]"))
+  log_msg(paste0(" -> Note                     : ", note_impact))
+  log_msg(paste0(" -> Linear Regression Slope  : ", round(slope_abund, 4)))
+  log_msg(paste0(" -> P-value                  : ", format_pval(pval_abund)))
   log_msg("")
-  log_msg(sprintf("[Plot E: %s]", title_therm))
-  log_msg(sprintf(" -> Note                     : %s", note_impact))
-  log_msg(sprintf(" -> GAM P-value              : %s", format_pval(pval_direct)))
+  log_msg(paste0("[Plot E: ", title_therm, "]"))
+  log_msg(paste0(" -> Note                     : ", note_impact))
+  log_msg(paste0(" -> GAM P-value              : ", format_pval(pval_direct)))
   log_msg("-------------------------------------------------------------------\n")
-  
+
   # ------------------------------------------------------------------- #
   # Section 5. Plotting Climate Impact (Individual & Combined)
   # ------------------------------------------------------------------- #
-  subtitle_supp <- sprintf("Decline of Phase-Aligned Abundance (Slope = %.3f, %s)", slope_abund, format_pval(pval_abund))
+  subtitle_supp <- paste0("Decline of Phase-Aligned Abundance (Slope = ", round(slope_abund, 3), ", ", format_pval(pval_abund), ")")
   
   p9_abund <- ggplot(analysis_df, aes(x = Year, y = Log_Abund)) +
     geom_boxplot(aes(group=Year_Fct), fill=neg_fill, alpha=0.3, color=neg_base_color, outlier.shape=NA) +
     geom_jitter(color=neg_base_color, alpha=0.6, width=0.15) + 
     geom_smooth(method="lm", color=trend_color, fill=trend_color, alpha=0.2, linewidth=1.2) +
     labs(title=title_supp, subtitle=subtitle_supp, x="Year", y="Log10(Lag-Adjusted POW Abundance + 1)") +
-    scale_x_continuous(breaks = min(analysis_df$Year):max(analysis_df$Year)) + 
+    scale_x_continuous(breaks = min(analysis_df$Year):max(analysis_df$Year), expand = expansion(add = 0.5)) + 
     theme(plot.title = element_text(face="bold"))
   
-  subtitle_therm <- paste("GAM correlation between Trigger Temp & Abundance (", format_pval(pval_direct), ")")
+  subtitle_therm <- paste0("GAM correlation between Trigger Temp & Abundance (", format_pval(pval_direct), ")")
   
   p9_direct <- ggplot(analysis_df, aes(x = Temperature, y = Log_Abund)) +
     geom_point(color=neg_base_color, size=2.5, alpha=0.6) + 
@@ -334,18 +337,15 @@ tryCatch({
   # Section 6. Export (All Variations)
   # ------------------------------------------------------------------- #
   if(enable_save_outputs) { 
-    # 1. 5개의 개별 플롯 저장
     ggsave(f_plot_env,   plot = p7_temp,   device = "tiff", dpi = 600, width = 8, height = 6, compression = "lzw")
     ggsave(f_plot_pheno, plot = p7_abund,  device = "tiff", dpi = 600, width = 8, height = 6, compression = "lzw")
     ggsave(f_plot_anova, plot = p7_anova,  device = "tiff", dpi = 600, width = 8, height = 8, compression = "lzw")
     ggsave(f_plot_supp,  plot = p9_abund,  device = "tiff", dpi = 600, width = 8, height = 6, compression = "lzw")
     ggsave(f_plot_therm, plot = p9_direct, device = "tiff", dpi = 600, width = 8, height = 6, compression = "lzw")
     
-    # 2. 통합 묶음 플롯 저장
     ggsave(f_plot_comb_pw, plot = p7_combined, device = "tiff", dpi = 600, width = 16, height = 8, compression = "lzw") 
     ggsave(f_plot_comb_im, plot = p9_combined, device = "tiff", dpi = 600, width = 13, height = 6, compression = "lzw") 
     
-    # 3. CSV 저장
     write.csv(analysis_df, f_csv_impact, row.names = FALSE)
     
     log_msg("[SUCCESS] 5 Individual Plots, 2 Combined Plots, and CSV Data saved successfully.")
@@ -356,6 +356,6 @@ tryCatch({
   print(p7_combined)
   print(p9_combined)
   
-}, error = function(e) { log_msg(paste("ERROR:", e$message)); stop(e) })
+}, error = function(e) { log_msg(paste0("ERROR: ", e$message)); stop(e) })
 
 ##### END. ######################################################################
