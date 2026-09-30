@@ -57,7 +57,7 @@ enable_save_outputs <- TRUE
 # 경로 및 동적 파일명 설정 (넘버링 갱신: Part 5)
 # ------------------------------------------------------------------- #
 base_dir   <- "/home/scott/EDM_16SV4_PA"
-input_dir  <- file.path(base_dir, "04_Phase4_Output/01_Data_Integration")
+input_dir  <- file.path(base_dir, "04_Phase4_V2_Output/01_Data_Integration")
 smap_dir   <- file.path(base_dir, "03_Phase3_Output/Phase3_Part3_MDR_Smap")
 out_dir    <- file.path(base_dir, "05_Phase5_Output/05_Time_Lag_Distribution")
 
